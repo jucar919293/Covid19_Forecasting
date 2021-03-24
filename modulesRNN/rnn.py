@@ -128,6 +128,7 @@ class EncoderAttention(nn.Module):
         return latent_seqs
 
 
+# noinspection PyAbstractClass
 class Encoder(nn.Module):
     def __init__(
             self,
@@ -169,6 +170,7 @@ class Encoder(nn.Module):
         return latent_seqs
 
 
+# noinspection PyAbstractClass
 class Decoder(nn.Module):
     def __init__(
             self,
@@ -241,14 +243,14 @@ class Decoder(nn.Module):
 
         param k_wk_ahead: how many weeks ahead to forecast
         """
-        inpu = torch.zeros((hidden.shape[0], 1, 1), dtype=dtype).to(device)
+        inputs = torch.zeros((hidden.shape[0], 1, 1), dtype=dtype).to(device)
         # note that hidden should be of (num_layers * num_directions, batch, hidden_size)
         hidden = hidden.unsqueeze(0)  # adding one dimension corresponding to num_layers * num_directions
         outputs = []
 
         for k in range(k_wk_ahead):
             # pass through first rnn
-            latent_seqs = self.rnn(inpu, hidden)[0]  # index 0 obtains all hidden states
+            latent_seqs = self.rnn(inputs, hidden)[0]  # index 0 obtains all hidden states
             out = self.out_layer(latent_seqs)
             outputs.append(out)
             hidden = latent_seqs.clone().squeeze(1).unsqueeze(0)
@@ -258,10 +260,10 @@ class Decoder(nn.Module):
                     print('ys_batch is required as input for decoder during training')
                     quit()
                 # teacher forcing
-                inpu = ys_batch[:, k]
-                inpu = inpu.reshape(-1, 1, 1)
+                inputs = ys_batch[:, k]
+                inputs = inputs.reshape(-1, 1, 1)
             else:
-                inpu = out
-            inpu = inpu
+                inputs = out
+            inputs = inputs
         outputs = torch.stack(outputs, 1).squeeze()
         return outputs
