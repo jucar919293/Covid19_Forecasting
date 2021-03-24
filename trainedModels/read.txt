@@ -1,0 +1,4 @@
+trained using:
+- bias
+- teaching forcing 0.5
+- dropout 0.2
