@@ -18,7 +18,7 @@ testing_epoch_print = 500
 
 # noinspection PyAbstractClass,DuplicatedCode
 class Seq2SeqModel(nn.Module):
-    def __init__(self, size_seq, n_signals, dataset, rnn_dim, wk_ahead):
+    def __init__(self, size_seq, n_signals, rnn_dim, wk_ahead, dataset=None):
         super(Seq2SeqModel, self).__init__()
         self.wk_ahead = wk_ahead
         self.size_seq = size_seq
