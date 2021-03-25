@@ -99,7 +99,7 @@ class Dataset:
         targets = []
         mask_seq = []
         mask_ys = []
-
+        allys = []
         for length in range(min_len_size, self.df.shape[0] + 1):
             # Sequences
             seqs.append(torch.from_numpy(self.x[:length, :]))
@@ -112,10 +112,14 @@ class Dataset:
             mask_seq.append(m_seq)
             # Mask targets
             mask_ys.append(torch.ones((len(y_))))
+            # All sequence
+            ally_ = self.scaledY[:length]
+            allys.append(torch.from_numpy(ally_))
 
         seqs = pad_sequence(seqs, batch_first=True).type(dtype).to(device)
         ys = pad_sequence(targets, batch_first=True).type(dtype).to(device)
         mask_seq = pad_sequence(mask_seq, batch_first=True).type(dtype).to(device)
         mask_ys = pad_sequence(mask_ys, batch_first=True).type(dtype).to(device)
+        allys = pad_sequence(allys,batch_first=True).type(dtype).to(device)
 
-        return seqs, ys, mask_seq, mask_ys
+        return seqs, ys, mask_seq, mask_ys, allys

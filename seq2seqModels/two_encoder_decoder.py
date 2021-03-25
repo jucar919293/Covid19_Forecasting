@@ -1,4 +1,3 @@
-# noinspection DuplicatedCode
 import torch.nn as nn
 import torch
 import numpy as np
@@ -16,9 +15,9 @@ training_epoch_print = 100
 testing_epoch_print = 500
 
 
-# noinspection PyAbstractClass,DuplicatedCode
+# noinspection PyAbstractClass,DuplicatedCode,PyTypeChecker,PyPep8Naming
 class Seq2SeqModel(nn.Module):
-    def __init__(self, size_seq, n_signals, dataset, rnn_dim):
+    def __init__(self, size_seq, n_signals, rnn_dim, dataset):
         super(Seq2SeqModel, self).__init__()
         self.size_seq = size_seq
         self.n_signals = n_signals
@@ -29,18 +28,21 @@ class Seq2SeqModel(nn.Module):
                                n_layers=1,
                                bidirectional=False, ).to(device).type(dtype)
 
+        self.encoder2 = Encoder(dim_seq_in=1,  # Change when more signals in seocnd encoder are included
+                                rnn_out=rnn_dim,
+                                n_layers=1,
+                                bidirectional=False, ).to(device).type(dtype)
+
         self.decoder = Decoder(dim_seq_in=1,
-                               rnn_out=int(rnn_dim),
+                               rnn_out=int(rnn_dim * 2),
                                n_layers=1,
                                bidirectional=False,
                                dim_out=1, ).to(device).type(dtype)
 
-    # noinspection PyPep8Naming,PyTypeChecker
-    def trainingModel(self, lr, epochs, seqs, mask_seq, ys, ysT, mask_ys, wk_ahead):
-
-        N = seqs.shape[0]
-        mini_batch_size = N // 2
-        print(f'Total batch: {N}')
+    def trainingModel(self, lr, epochs, seqs, mask_seq, ys, ysT, mask_ys, wk_ahead, allys):
+        n = seqs.shape[0]
+        mini_batch_size = n // 2
+        print(f'Total batch: {n}')
         print(f'Mini batch: {mini_batch_size}')
         params = list(self.parameters())
         optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, params), lr=lr)
@@ -48,19 +50,22 @@ class Seq2SeqModel(nn.Module):
 
         for epoch in range(epochs):
             self.train()
-            for _ in range(N // mini_batch_size):
+            for _ in range(n // mini_batch_size):
                 # get batch of data
-                idx = np.random.choice(N, mini_batch_size)
-                # idx=[20]
+                idx = np.random.choice(n, mini_batch_size)
                 seqs_batch = seqs[idx, :]
                 ys_batch = ys[idx, :]
                 mask_seq_batch = mask_seq[idx, :]
                 mask_ys_batch = mask_ys[idx, :]
+                allys_batch = allys[idx, :]
                 # forward pass
                 # Using encoder:
                 c_vector = self.encoder(seqs_batch, mask_seq_batch)
+                c_vector2 = self.encoder2(allys_batch.unsqueeze(-1), mask_seq_batch)
+                concat = torch.cat((c_vector, c_vector2), 1)
+
                 # Using decoder:
-                predictions = self.decoder(c_vector, wk_ahead, ys_batch)
+                predictions = self.decoder(concat, wk_ahead, ys_batch)
                 # prediction loss
                 pred_loss = F.mse_loss(predictions, ys_batch, reduction='none') * mask_ys_batch
                 pred_loss = pred_loss.mean()
@@ -69,7 +74,6 @@ class Seq2SeqModel(nn.Module):
                 optimizer.step()
 
             if epoch % training_epoch_print == 0:
-
                 print("Training Process Eval")
                 # noinspection PyUnboundLocalVariable
                 print(f'Epoch: {epoch:d}, Loss: {pred_loss.item():.3e}, Learning Rate: {lr:.1e}')

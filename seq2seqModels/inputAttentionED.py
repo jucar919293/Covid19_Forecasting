@@ -1,8 +1,7 @@
-# noinspection DuplicatedCode
 import torch.nn as nn
 import torch
 import numpy as np
-from modulesRNN.rnn import Encoder, Decoder
+from modulesRNN.rnn import EncoderAttention, Decoder
 import time
 import torch.nn.functional as F
 
@@ -16,7 +15,7 @@ training_epoch_print = 100
 testing_epoch_print = 500
 
 
-# noinspection PyAbstractClass,DuplicatedCode
+# noinspection PyAbstractClass,DuplicatedCode,PyTypeChecker,PyPep8Naming
 class Seq2SeqModel(nn.Module):
     def __init__(self, size_seq, n_signals, dataset, rnn_dim):
         super(Seq2SeqModel, self).__init__()
@@ -24,10 +23,11 @@ class Seq2SeqModel(nn.Module):
         self.n_signals = n_signals
         self.primer_dataset = dataset
         # Creating encoder:
-        self.encoder = Encoder(dim_seq_in=self.n_signals,
-                               rnn_out=rnn_dim,
-                               n_layers=1,
-                               bidirectional=False, ).to(device).type(dtype)
+        self.encoder = EncoderAttention(dim_seq_in=self.n_signals,
+                                        rnn_out=rnn_dim,
+                                        n_layers=1,
+                                        size_seq=self.size_seq,
+                                        bidirectional=False, ).to(device).type(dtype)
 
         self.decoder = Decoder(dim_seq_in=1,
                                rnn_out=int(rnn_dim),
@@ -35,9 +35,7 @@ class Seq2SeqModel(nn.Module):
                                bidirectional=False,
                                dim_out=1, ).to(device).type(dtype)
 
-    # noinspection PyPep8Naming,PyTypeChecker
     def trainingModel(self, lr, epochs, seqs, mask_seq, ys, ysT, mask_ys, wk_ahead):
-
         N = seqs.shape[0]
         mini_batch_size = N // 2
         print(f'Total batch: {N}')
@@ -51,7 +49,6 @@ class Seq2SeqModel(nn.Module):
             for _ in range(N // mini_batch_size):
                 # get batch of data
                 idx = np.random.choice(N, mini_batch_size)
-                # idx=[20]
                 seqs_batch = seqs[idx, :]
                 ys_batch = ys[idx, :]
                 mask_seq_batch = mask_seq[idx, :]
@@ -69,7 +66,6 @@ class Seq2SeqModel(nn.Module):
                 optimizer.step()
 
             if epoch % training_epoch_print == 0:
-
                 print("Training Process Eval")
                 # noinspection PyUnboundLocalVariable
                 print(f'Epoch: {epoch:d}, Loss: {pred_loss.item():.3e}, Learning Rate: {lr:.1e}')
