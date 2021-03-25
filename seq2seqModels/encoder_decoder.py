@@ -18,8 +18,9 @@ testing_epoch_print = 500
 
 # noinspection PyAbstractClass,DuplicatedCode
 class Seq2SeqModel(nn.Module):
-    def __init__(self, size_seq, n_signals, dataset, rnn_dim):
+    def __init__(self, size_seq, n_signals, dataset, rnn_dim, wk_ahead):
         super(Seq2SeqModel, self).__init__()
+        self.wk_ahead = wk_ahead
         self.size_seq = size_seq
         self.n_signals = n_signals
         self.primer_dataset = dataset
@@ -36,7 +37,16 @@ class Seq2SeqModel(nn.Module):
                                dim_out=1, ).to(device).type(dtype)
 
     # noinspection PyPep8Naming,PyTypeChecker
-    def trainingModel(self, lr, epochs, seqs, mask_seq, ys, ysT, mask_ys, wk_ahead):
+
+    def forward(self, seqs, mask_seqs, ys=None):
+        # forward pass
+        # Using encoder:
+        c_vector = self.encoder(seqs, mask_seqs)
+        # Using decoder:
+        predictions = self.decoder(c_vector, self.wk_ahead, ys)
+        return predictions
+
+    def trainingModel(self, lr, epochs, seqs, mask_seq, ys, ysT, mask_ys, allys):
 
         N = seqs.shape[0]
         mini_batch_size = N // 2
@@ -56,11 +66,7 @@ class Seq2SeqModel(nn.Module):
                 ys_batch = ys[idx, :]
                 mask_seq_batch = mask_seq[idx, :]
                 mask_ys_batch = mask_ys[idx, :]
-                # forward pass
-                # Using encoder:
-                c_vector = self.encoder(seqs_batch, mask_seq_batch)
-                # Using decoder:
-                predictions = self.decoder(c_vector, wk_ahead, ys_batch)
+                predictions = self.forward(seqs_batch, mask_seq_batch, ys_batch)
                 # prediction loss
                 pred_loss = F.mse_loss(predictions, ys_batch, reduction='none') * mask_ys_batch
                 pred_loss = pred_loss.mean()
@@ -78,8 +84,7 @@ class Seq2SeqModel(nn.Module):
             # TODO: Implement a early stop in training calculating the error in testing
             if epoch % testing_epoch_print == 0:
                 self.eval()
-                c_vector = self.encoder(seqs, mask_seq)
-                predictions = self.decoder(c_vector, wk_ahead, ys)
+                predictions = self.forward(seqs, mask_seq, ys)
                 print("Test Process Eval")
                 print(self.primer_dataset.scale_back_Y(predictions))
                 print(ysT)

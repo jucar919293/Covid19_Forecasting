@@ -68,18 +68,14 @@ def training_process():
                 seqs, ys, mask_seq, mask_ys, allys = dataset.create_seqs(min_len_sequence, RNN_DIM)
 
                 # Creating seq2seqModel
-                seqModel = encoder_decoder.Seq2SeqModel(seqs.shape[1], seqs.shape[-1], dataset, RNN_DIM)
-                seqModel.trainingModel(0.001, 3000, seqs, mask_seq, ys, ysT[:ys.shape[0], :], mask_ys, wk_ahead)
-                seqModel.trainingModel(0.0001, 3000, seqs, mask_seq, ys, ysT[:ys.shape[0], :], mask_ys, wk_ahead)
-                seqModel.trainingModel(0.00001, 1500, seqs, mask_seq, ys, ysT[:ys.shape[0], :], mask_ys, wk_ahead)
+                seqModel = two_encoder_decoder.Seq2SeqModel(seqs.shape[1], seqs.shape[-1], dataset, RNN_DIM, wk_ahead)
+                seqModel.trainingModel(0.001, 3000, seqs, mask_seq, ys, ysT[:ys.shape[0], :], mask_ys, allys)
+                seqModel.trainingModel(0.0001, 3000, seqs, mask_seq, ys, ysT[:ys.shape[0], :], mask_ys, allys)
+                seqModel.trainingModel(0.00001, 1500, seqs, mask_seq, ys, ysT[:ys.shape[0], :], mask_ys, allys)
 
                 # Saving the model
                 path_model = model_path_save + region + '_' + ew_str + '_' + str(i) + '.pth'
-                # torch.save(seqModel.state_dict(), path_model)
-
-
-def main():
-    pass
+                torch.save(seqModel.state_dict(), path_model)
 
 
 # Function to be executed.
