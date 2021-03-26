@@ -37,14 +37,17 @@ class Seq2SeqModel(nn.Module):
                                bidirectional=False,
                                dim_out=1, ).to(device).type(dtype)
 
-    def forward(self, seqs, mask_seq, ys=None):
+    def forward(self, seqs, mask_seq, ys=None, get_att=False):
 
         # forward pass
         # Using encoder:
-        c_vector = self.encoder(seqs, mask_seq)
+        c_vector, e_values, attention_values = self.encoder(seqs, mask_seq)
         # Using decoder:
         predictions = self.decoder(c_vector, self.wk_ahead, ys)
-        return predictions
+        if get_att:
+            return predictions, e_values, attention_values
+        else:
+            return predictions
 
     # noinspection PyPep8Naming,DuplicatedCode
     def trainingModel(self, lr, epochs, seqs, mask_seq, ys, ysT, mask_ys, allys):

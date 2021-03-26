@@ -19,7 +19,6 @@ testing_epoch_print = 500
 class Seq2SeqModel(nn.Module):
     def __init__(self, size_seq, n_signals, rnn_dim, wk_ahead, dataset=None):
         super(Seq2SeqModel, self).__init__()
-
         self.wk_ahead = wk_ahead
         self.size_seq = size_seq
         self.n_signals = n_signals
@@ -42,15 +41,18 @@ class Seq2SeqModel(nn.Module):
                                bidirectional=False,
                                dim_out=1, ).to(device).type(dtype)
 
-    def forward(self, seqs, mask_seqs, allys, ys=None):
+    def forward(self, seqs, mask_seqs, allys, ys=None, get_att=False):
         # forward pass
         # Using encoder:
-        c_vector = self.encoder(seqs, mask_seqs)
+        c_vector, e_values, attention_values = self.encoder(seqs, mask_seqs)
         c_vector2 = self.encoder2(allys.unsqueeze(-1), mask_seqs)
         concat = torch.cat((c_vector, c_vector2), 1)
         # Using decoder:
         predictions = self.decoder(concat, self.wk_ahead, ys)
-        return predictions
+        if get_att:
+            return predictions, e_values, attention_values
+        else:
+            return predictions
 
     def trainingModel(self, lr, epochs, seqs, mask_seq, ys, ysT, mask_ys, allys):
         N = seqs.shape[0]

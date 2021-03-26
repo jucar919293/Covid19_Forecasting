@@ -1,6 +1,6 @@
 from abc import ABC
 from typing import Any
-
+import pandas as pd
 import torch
 import torch.nn as nn
 from .weight_init import weight_init
@@ -85,7 +85,8 @@ class EncoderAttention(nn.Module):
         self.rnn_out = rnn_out
         self.bidirectional = bidirectional
         self.size_seq = size_seq
-
+        self.attention_total = {}
+        self.e_values_total = {}
         # Creating Attention
         self.attention = InputAttention(size_hidden=self.rnn_out,
                                         n_features=self.dim_seq_in,
@@ -107,6 +108,7 @@ class EncoderAttention(nn.Module):
         """
 
         hidden_total = []
+
         seqs_update = seqs.clone()
         h_t_previous = torch.zeros((seqs.shape[0], self.rnn_out)).unsqueeze(1).to(device).type(dtype)
         signal_k = seqs.transpose(1, 2)
@@ -119,13 +121,19 @@ class EncoderAttention(nn.Module):
             h_t = self.rnn(seqs_update.clone())[0]
             hidden_total.append(h_t[:, t, :])
             h_t_previous = h_t[:, t, :].clone().unsqueeze(1)
+
+            self.e_values_total[str(t)] = e_values_t.squeeze(0).squeeze(-1).detach().numpy()
+            self.attention_total[str(t)] = att_values_t.squeeze(0).squeeze(-1).detach().numpy()
+
         hidden_total = torch.stack(hidden_total, 1).to(device).type(dtype)
         # Pass through first rnn
         latent_seqs = hidden_total * mask  # keep hidden states that correspond to non-zero in seqs
         latent_seqs = latent_seqs.sum(1)  # NOTE: change when doing attention
+        df_e = pd.DataFrame(self.e_values_total)
+        df_a = pd.DataFrame(self.attention_total)
         # pdb.set_trace()
         # pdb.set_trace()
-        return latent_seqs
+        return latent_seqs, df_e, df_a
 
 
 # noinspection PyAbstractClass
