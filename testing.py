@@ -14,8 +14,8 @@ dtype = torch.float64
 data_path_dataset = './data/train_data_weekly_vEW202105.csv'
 data_path_visual = './data/train_data_weekly_noscale_vEW202105.csv'
 wk_ahead = 4
-regions = ['X', 'CA', 'FL', 'GA', 'IL', 'LA', 'PA', 'TX', 'WA']
-# regions = ['TX', 'PA', 'LA', 'IL', 'GA', 'FL']
+# regions = ['X', 'CA', 'FL', 'GA', 'IL', 'LA', 'PA', 'TX', 'WA']
+regions = ['X', 'WA', 'TX', 'PA', 'LA']
 weeks_strings = [str(x) for x in range(202010, 202054)] + [str(y) for y in range(202101, 202107)]
 weeks = [Week.fromstring(y) for y in weeks_strings]
 include_col = ['target_death', 'retail_and_recreation_percent_change_from_baseline',
@@ -30,35 +30,31 @@ n_signals = len(include_col) - 1
 last_week_data = Week.fromstring('202106')
 
 model_types = ('2ED', 'ED', 'Input2ED', 'InputED')
-models = [
-
-]
-
-def plot_signals():
-    pass
 
 
 def testing():
     # Variables:
     n_week = 45
     wk_ahead = 4
-    model_type = model_types[1]  # Change
-    error_total = []
-    predictions_total = []
+    model_type = model_types[2]  # Change
+    error_total = {}
+    predictions_total = {}
+    real_values_total = {}
+    cyc = '_0'
     for region in regions:
         for n_week in range(20, 46):
             # for n_week in range(20, 49 - wk_ahead + 1):
 
             # region = 'X'
             week = weeks[n_week]  # Actual week +1
-            path_model = './trainedModels/' + model_type + '/' + region + '_' + weeks_strings[n_week - 1] + '_0.pth'
-
+            path_model = './trainedModels/' + model_type + '/' + region + '_' + weeks_strings[n_week - 1] + cyc + '.pth'
+            print(path_model)
             dataset_visual = Dataset(data_path_visual, last_week_data, region, include_col, wk_ahead)
 
             # Creating and loading model
             dataset_test = Dataset(data_path_dataset, week, region, include_col, wk_ahead)
             seqs, ys, mask_seq, mask_ys, allys = dataset_test.create_seqs(dataset_test.y.shape[0], RNN_DIM)
-            seq_model = encoder_decoder.Seq2SeqModel(seqs.shape[1], seqs.shape[-1], RNN_DIM, wk_ahead)  # Change
+            seq_model = inputAttention2ED.Seq2SeqModel(seqs.shape[1], seqs.shape[-1], RNN_DIM, wk_ahead)  # Change
             seq_model.load_state_dict(torch.load(path_model, map_location=torch.device(device)))
             # Testing the model
             seq_model.eval()
@@ -69,13 +65,14 @@ def testing():
             real_values = dataset_visual.y[n_week:n_week + wk_ahead]
             real_values_tensor = torch.tensor(real_values)
             # Calculating error
-            mae = utils.mae_calc(predictions_tensor, real_values_tensor)
-            mape = utils.mape_calc(predictions_tensor, real_values_tensor)
-            mse = utils.mse_calc(predictions_tensor, real_values_tensor)
-            rmse = utils.rmse_calc(predictions_tensor, real_values_tensor)
+            mae = utils.mae_calc(predictions_tensor, real_values_tensor).detach().numpy()
+            mape = utils.mape_calc(predictions_tensor, real_values_tensor).detach().numpy()
+            mse = utils.mse_calc(predictions_tensor, real_values_tensor).detach().numpy()
+            rmse = utils.rmse_calc(predictions_tensor, real_values_tensor).detach().numpy()
 
-            error_total.append([mae, mape, mse, rmse])
-            predictions_total.append(predictions)
+            error_total[weeks_strings[n_week - 1]] = [mae, mape, mse, rmse]
+            predictions_total[weeks_strings[n_week - 1]] = predictions
+            real_values_total[weeks_strings[n_week - 1]] = real_values
             # Plotting an printing results
             x = [n for n in range(n_week+1, n_week + wk_ahead+1)]
             plt.plot(x, real_values, '-')
@@ -83,10 +80,15 @@ def testing():
 
             print(f'N:{n_week} MAE:{mae}, MAPE:{mape}, MSE:{mse}, RMSE:{rmse}')
 
+        df_e = pd.DataFrame(error_total, index=['MAE', 'MAPE', 'MSE', 'RMSE']).transpose()
+        df_p = pd.DataFrame(predictions_total, index=['wk1', 'wk2', 'wk3', '2k4']).transpose()
+        df_r = pd.DataFrame(real_values_total, index=['wk1', 'wk2', 'wk3', '2k4']).transpose()
+
+        df_e.to_csv('./Results/Errors/'+model_type+'_'+region+cyc+'.csv', index=False, header=True)
+        df_p.to_csv('./Results/Predictions/'+model_type+'_'+region+cyc+'.csv', index=False, header=True)
+        df_r.to_csv('./Results/Real/'+model_type+'_'+region+cyc+'.csv', index=False, header=True)
 
         plt.show()
-
-    a = 1
 
 
 if __name__ == '__main__':
