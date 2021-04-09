@@ -10,10 +10,10 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 """
 # Introduce the path were the data is storage
 data_path = './data/train_data_weekly_vEW202105.csv'
-model_path = ['./trainedModels/Input2ED/',
-              './trainedModels/InputED/',
-              './trainedModels/2ED/',
-              './trainedModels/ED/']
+model_path = ['./trainedModels/firstTry/Input2ED/',
+              './trainedModels/firstTry/InputED/',
+              './trainedModels/firstTry/2ED/',
+              './trainedModels/firstTry/ED/']
 
 # Select future target
 wk_ahead = 4
@@ -27,7 +27,7 @@ weeks = [Week.fromstring(y) for y in weeks_strings]
 #            'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VA', 'VT', 'WA', 'WI', 'WV', 'WY']
 
 # regions = ['X', 'CA', 'FL', 'GA', 'IL', 'LA', 'PA', 'TX', 'WA']
-regions = ['TX', 'PA', 'LA', 'IL', 'GA', 'FL']
+regions = ['CA']
 
 # Select signals
 include_col = ['target_death', 'retail_and_recreation_percent_change_from_baseline',
@@ -49,7 +49,7 @@ n_signals = len(include_col) - 1
 # noinspection PyPep8Naming
 def training_process():
     last_week_data = Week.fromstring('202106')
-    model_path_save = model_path[0]
+    model_path_save = model_path[1]
     min_len_sequence = 10
     number_models = 2
     print("Initializing ...")
@@ -62,16 +62,16 @@ def training_process():
             _, ysT, _, _, _ = total_data_seq.create_seqs(min_len_sequence, RNN_DIM)
             ysT = total_data_seq.scale_back_Y(ysT)
 
-            for ew, ew_str in zip(weeks[20:46], weeks_strings[19:45]):
+            for ew, ew_str in zip(weeks[26:46], weeks_strings[25:45]):
                 print(f'Week:{ew}')
                 dataset = Dataset(data_path, ew, region, include_col, wk_ahead)
                 seqs, ys, mask_seq, mask_ys, allys = dataset.create_seqs(min_len_sequence, RNN_DIM)
 
                 # Creating seq2seqModel
-                seqModel = two_encoder_decoder.Seq2SeqModel(seqs.shape[1], seqs.shape[-1], RNN_DIM, wk_ahead, dataset)
-                seqModel.trainingModel(0.001, 3000, seqs, mask_seq, ys, ysT[:ys.shape[0], :], mask_ys, allys)
-                seqModel.trainingModel(0.0001, 3000, seqs, mask_seq, ys, ysT[:ys.shape[0], :], mask_ys, allys)
-                seqModel.trainingModel(0.00001, 1500, seqs, mask_seq, ys, ysT[:ys.shape[0], :], mask_ys, allys)
+                seqModel = inputAttentionED.Seq2SeqModel(seqs.shape[1], seqs.shape[-1], RNN_DIM, wk_ahead, dataset)
+                seqModel.trainingModel(0.001, 1000, seqs, mask_seq, ys, ysT[:ys.shape[0], :], mask_ys, allys)
+                seqModel.trainingModel(0.0001, 1000, seqs, mask_seq, ys, ysT[:ys.shape[0], :], mask_ys, allys)
+                seqModel.trainingModel(0.00001, 500, seqs, mask_seq, ys, ysT[:ys.shape[0], :], mask_ys, allys)
 
                 # Saving the model
                 path_model = model_path_save + region + '_' + ew_str + '_' + str(i) + '.pth'

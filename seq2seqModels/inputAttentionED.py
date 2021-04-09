@@ -41,7 +41,7 @@ class Seq2SeqModel(nn.Module):
 
         # forward pass
         # Using encoder:
-        c_vector, e_values, attention_values = self.encoder(seqs, mask_seq)
+        c_vector, e_values, attention_values = self.encoder(seqs, mask_seq, get_att=get_att)
         # Using decoder:
         predictions = self.decoder(c_vector, self.wk_ahead, ys)
         if get_att:
@@ -68,7 +68,7 @@ class Seq2SeqModel(nn.Module):
                 ys_batch = ys[idx, :]
                 mask_seq_batch = mask_seq[idx, :]
                 mask_ys_batch = mask_ys[idx, :]
-                predictions = self.forward(seqs_batch, mask_seq_batch, ys_batch)
+                predictions = self.forward(seqs_batch, mask_seq_batch, ys_batch, get_att=False)
                 # prediction loss
                 pred_loss = F.mse_loss(predictions, ys_batch, reduction='none') * mask_ys_batch
                 pred_loss = pred_loss.mean()
@@ -80,12 +80,11 @@ class Seq2SeqModel(nn.Module):
                 print("Training Process Eval")
                 # noinspection PyUnboundLocalVariable
                 print(f'Epoch: {epoch:d}, Loss: {pred_loss.item():.3e}, Learning Rate: {lr:.1e}')
-                start_time = time.time()
 
             # TODO: Implement a early stop in training calculating the error in testing
             if epoch % testing_epoch_print == 0:
                 self.eval()
-                predictions = self.forward(seqs, mask_seq, ys)
+                predictions = self.forward(seqs, mask_seq, ys, get_att=False)
                 print("Test Process Eval")
                 print(self.primer_dataset.scale_back_Y(predictions))
                 print(ysT)

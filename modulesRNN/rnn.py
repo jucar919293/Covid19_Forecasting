@@ -102,7 +102,7 @@ class EncoderAttention(nn.Module):
         # init weights
         weight_init(self.rnn)
 
-    def forward(self, seqs, mask=None):
+    def forward(self, seqs, mask=None, get_att=None):
         """
         param mask: binary tensor with same shape as seqs
         """
@@ -129,11 +129,16 @@ class EncoderAttention(nn.Module):
         # Pass through first rnn
         latent_seqs = hidden_total * mask  # keep hidden states that correspond to non-zero in seqs
         latent_seqs = latent_seqs.sum(1)  # NOTE: change when doing attention
-        df_e = pd.DataFrame(self.e_values_total)
-        df_a = pd.DataFrame(self.attention_total)
+        if self.training and not get_att:
+            return latent_seqs, self.e_values_total, self.attention_total
+        elif get_att:
+            df_a = pd.DataFrame(self.attention_total)
+            df_e = pd.DataFrame(self.e_values_total)
+            return latent_seqs, df_e, df_a
+        else:
+            return latent_seqs, self.e_values_total, self.attention_total
         # pdb.set_trace()
         # pdb.set_trace()
-        return latent_seqs, df_e, df_a
 
 
 # noinspection PyAbstractClass
