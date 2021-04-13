@@ -61,6 +61,7 @@ def rmse_calc(pred, true):
 """
 
 
+# noinspection DuplicatedCode
 class Dataset:
     def __init__(self, data_path, last_epi_week, region, include_col, wk_ahead):
         self.wk_ahead = wk_ahead
@@ -87,6 +88,32 @@ class Dataset:
         mean = torch.tensor([self.meanY]).type(dtype).to(device)
         std = torch.tensor([self.stdY]).type(dtype).to(device)
         return (y * std) + mean
+
+    # noinspection DuplicatedCode
+    def create_seqs_limited(self, T, rnn_dim, stride):
+        # convert to small sequences for training, all length T
+        seqs = []
+        targets = []
+        mask_seq = []
+        mask_ys = []
+        allys = []
+        num_seqs = (self.x.shape[0]-T+stride) // stride
+        for n in range(num_seqs):  # x.shape: [total_size_data, number_signals]
+            seqs.append(torch.tensor(self.x[n*stride:n*stride+T, :]))
+            last_data = T + stride*n - 1
+            y_ = self.scaledY[last_data + 1:last_data + 1 + self.wk_ahead]
+            targets.append(torch.tensor(y_))
+            # Mask targets
+            mask_ys.append(torch.ones(len(y_)))
+            # All sequence
+            ally_ = self.scaledY[n*stride:n*stride+T]
+            allys.append(torch.tensor(ally_, dtype=dtype))
+
+        seqs = pad_sequence(seqs, batch_first=True).type(dtype).to(device)
+        ys = pad_sequence(targets, batch_first=True).type(dtype).to(device)
+        mask_ys = pad_sequence(mask_ys, batch_first=True).type(dtype).to(device)
+        allys = pad_sequence(allys, batch_first=True).type(dtype).to(device)
+        return seqs, ys, mask_ys, allys
 
     def create_seqs(self, min_len_size, rnn_dim):
         """

@@ -27,7 +27,7 @@ weeks = [Week.fromstring(y) for y in weeks_strings]
 #            'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VA', 'VT', 'WA', 'WI', 'WV', 'WY']
 
 # regions = ['X', 'CA', 'FL', 'GA', 'IL', 'LA', 'PA', 'TX', 'WA']
-regions = ['CA']
+regions = ['X']
 
 # Select signals
 include_col = ['target_death', 'retail_and_recreation_percent_change_from_baseline',
