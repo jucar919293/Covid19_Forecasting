@@ -1,7 +1,7 @@
 import torch
 from epiweeks import Week
 from modulesRNN.utils import Dataset
-from seq2seqModels import encoder_decoder, two_encoder_decoder, inputAttention2ED, inputAttentionED
+from seq2seqModels.models import Encoder2Decoder, Input2EncoderDecoder, InputEncoderDecoder, EncoderDecoder
 
 device = torch.device("cpu")
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -10,10 +10,10 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 """
 # Introduce the path were the data is storage
 data_path = './data/train_data_weekly_vEW202105.csv'
-model_path = ['./trainedModels/firstTry/Input2ED/',
-              './trainedModels/firstTry/InputED/',
-              './trainedModels/firstTry/2ED/',
-              './trainedModels/firstTry/ED/']
+model_path = ['./trainedModels/Windowed/Input2ED/',
+              './trainedModels/Windowed/InputED/',
+              './trainedModels/Windowed/2ED/',
+              './trainedModels/Windowed/ED/']
 
 # Select future target
 wk_ahead = 4
@@ -48,34 +48,39 @@ n_signals = len(include_col) - 1
 # Main function
 # noinspection PyPep8Naming
 def training_process():
-    last_week_data = Week.fromstring('202106')
-    model_path_save = model_path[1]
-    min_len_sequence = 10
-    number_models = 2
+    last_week_data = Week.fromstring('202106')  # Total weeks: 49
+    model_path_save = model_path[3]
+    T = 15
+    stride = 1
+    total_weeks = 49
+    n_min_seqs = 29  # Goes from 1 to 30(totalWeeks - T + stride / stride)
+    max_val_week = total_weeks - wk_ahead + 1
+    min_val_week = T + n_min_seqs + 1
     print("Initializing ...")
 
-    for i in range(number_models):
-        for region in regions:
+    for region in regions:
 
-            print(f'Region: {region}')
-            total_data_seq = Dataset(data_path, last_week_data, region, include_col, wk_ahead)
-            _, ysT, _, _, _ = total_data_seq.create_seqs(min_len_sequence, RNN_DIM)
-            ysT = total_data_seq.scale_back_Y(ysT)
+        print(f'Region: {region}')
+        total_data_seq = Dataset(data_path, last_week_data, region, include_col, wk_ahead)
+        _, _, _, _, allyT = total_data_seq.create_seqs_limited(T, stride, RNN_DIM, get_test=False)
+        yT = total_data_seq.scale_back_Y(allyT[-1])
 
-            for ew, ew_str in zip(weeks[26:46], weeks_strings[25:45]):
-                print(f'Week:{ew}')
-                dataset = Dataset(data_path, ew, region, include_col, wk_ahead)
-                seqs, ys, mask_seq, mask_ys, allys = dataset.create_seqs(min_len_sequence, RNN_DIM)
+        for ew, ew_str in zip(weeks[min_val_week:max_val_week], weeks_strings[min_val_week-1:max_val_week-1]):
+            print(f'Week:{ew}')
+            dataset = Dataset(data_path, ew, region, include_col, wk_ahead)
+            seqs, ys, mask_seq, mask_ys, allys, test = dataset.create_seqs_limited(T, stride, RNN_DIM, get_test=True)
 
-                # Creating seq2seqModel
-                seqModel = inputAttentionED.Seq2SeqModel(seqs.shape[1], seqs.shape[-1], RNN_DIM, wk_ahead, dataset)
-                seqModel.trainingModel(0.001, 1000, seqs, mask_seq, ys, ysT[:ys.shape[0], :], mask_ys, allys)
-                seqModel.trainingModel(0.0001, 1000, seqs, mask_seq, ys, ysT[:ys.shape[0], :], mask_ys, allys)
-                seqModel.trainingModel(0.00001, 500, seqs, mask_seq, ys, ysT[:ys.shape[0], :], mask_ys, allys)
+            # Creating seq2seqModel
+            seqModel = EncoderDecoder(seqs.shape[-1], RNN_DIM, wk_ahead)
 
-                # Saving the model
-                path_model = model_path_save + region + '_' + ew_str + '_' + str(i) + '.pth'
-                torch.save(seqModel.state_dict(), path_model)
+            # Testing the seqModel
+            seqModel.eval()
+            seqs, mask_seq = seqs.to(device), mask_seq.to(device)
+            predictions = seqModel(seqs, mask_seq)
+
+            # Saving the model
+            path_model = model_path_save + region + '_' + ew_str + '_' + '.pth'
+            torch.save(seqModel.state_dict(), path_model)
 
 
 # Function to be executed.

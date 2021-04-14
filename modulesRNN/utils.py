@@ -2,11 +2,10 @@ import torch
 import pandas as pd
 from epiweeks import Week
 from torch.nn.utils.rnn import pad_sequence
+import numpy as np
+import time
 
-device = torch.device("cpu")
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-dtype = torch.float64
-
+data_type = torch.float64
 """
     Useful functions
 """
@@ -81,39 +80,48 @@ class Dataset:
         self.stdY = self.y.std()
         self.scaledY = self.y - self.meanY
         self.scaledY /= self.stdY
-        self.testY = torch.tensor(self.y[len(self.y) - wk_ahead:len(self.y) + 1]).unsqueeze(0).type(dtype).to(device)
+        self.testY = torch.tensor(self.y[len(self.y) - wk_ahead:len(self.y) + 1], dtype=data_type).unsqueeze(0)
 
     # noinspection PyPep8Naming,PyTypeChecker
     def scale_back_Y(self, y):
-        mean = torch.tensor([self.meanY]).type(dtype).to(device)
-        std = torch.tensor([self.stdY]).type(dtype).to(device)
+        mean = torch.tensor([self.meanY], dtype=data_type)
+        std = torch.tensor([self.stdY], dtype=data_type)
         return (y * std) + mean
 
     # noinspection DuplicatedCode
-    def create_seqs_limited(self, T, rnn_dim, stride):
+    def create_seqs_limited(self, t, stride, rnn_dim, get_test=False):
         # convert to small sequences for training, all length T
         seqs = []
         targets = []
         mask_seq = []
         mask_ys = []
         allys = []
-        num_seqs = (self.x.shape[0]-T+stride) // stride
+        num_seqs = (self.x.shape[0]-t+stride) // stride
         for n in range(num_seqs):  # x.shape: [total_size_data, number_signals]
-            seqs.append(torch.tensor(self.x[n*stride:n*stride+T, :]))
-            last_data = T + stride*n - 1
+            seqs.append(torch.tensor(self.x[n*stride:n*stride+t, :]))
+            last_data = t + stride*n - 1
             y_ = self.scaledY[last_data + 1:last_data + 1 + self.wk_ahead]
             targets.append(torch.tensor(y_))
+            # Mask Sequences
+            m_seq = torch.zeros((t, rnn_dim))  # NOTE: this is useful for temporal attention
+            m_seq[-1] = 1
+            mask_seq.append(m_seq)
             # Mask targets
             mask_ys.append(torch.ones(len(y_)))
             # All sequence
-            ally_ = self.scaledY[n*stride:n*stride+T]
-            allys.append(torch.tensor(ally_, dtype=dtype))
+            ally_ = self.scaledY[n*stride:n*stride+t]
+            allys.append(torch.tensor(ally_))
 
-        seqs = pad_sequence(seqs, batch_first=True).type(dtype).to(device)
-        ys = pad_sequence(targets, batch_first=True).type(dtype).to(device)
-        mask_ys = pad_sequence(mask_ys, batch_first=True).type(dtype).to(device)
-        allys = pad_sequence(allys, batch_first=True).type(dtype).to(device)
-        return seqs, ys, mask_ys, allys
+        seqs = pad_sequence(seqs, batch_first=True).double()
+        ys = pad_sequence(targets, batch_first=True).double()
+        mask_seq = pad_sequence(mask_seq, batch_first=True).double()
+        mask_ys = pad_sequence(mask_ys, batch_first=True).double()
+        allys = pad_sequence(allys, batch_first=True).double()
+        test = seqs[num_seqs-1].unsqueeze(0).double()
+        if get_test:
+            return seqs, ys, mask_seq, mask_ys, allys, test
+        else:
+            return seqs, ys, mask_seq, mask_ys, allys
 
     def create_seqs(self, min_len_size, rnn_dim):
         """
@@ -143,10 +151,57 @@ class Dataset:
             ally_ = self.scaledY[:length]
             allys.append(torch.from_numpy(ally_))
 
-        seqs = pad_sequence(seqs, batch_first=True).type(dtype).to(device)
-        ys = pad_sequence(targets, batch_first=True).type(dtype).to(device)
-        mask_seq = pad_sequence(mask_seq, batch_first=True).type(dtype).to(device)
-        mask_ys = pad_sequence(mask_ys, batch_first=True).type(dtype).to(device)
-        allys = pad_sequence(allys,batch_first=True).type(dtype).to(device)
+        seqs = pad_sequence(seqs, batch_first=True).double()
+        ys = pad_sequence(targets, batch_first=True).double()
+        mask_seq = pad_sequence(mask_seq, batch_first=True).double()
+        mask_ys = pad_sequence(mask_ys, batch_first=True).double()
+        allys = pad_sequence(allys,batch_first=True).double()
 
         return seqs, ys, mask_seq, mask_ys, allys
+
+
+# noinspection PyPep8Naming,DuplicatedCode
+def trainingModel(seq2seqmodel, lr, epochs, seqs, mask_seq, ys, ysT, mask_ys, allys):
+    N = seqs.shape[0]
+    mini_batch_size = N // 2
+    print(f'Total batch: {N}')
+    print(f'Mini batch: {mini_batch_size}')
+    params = list(seq2seqmodel.parameters())
+    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, params), lr=lr)
+    start_time = time.time()
+
+    for epoch in range(epochs):
+        seq2seqmodel.train()
+        for _ in range(N // mini_batch_size):
+            # get batch of data
+            idx = np.random.choice(N, mini_batch_size)
+            seqs_batch = seqs[idx, :]
+            ys_batch = ys[idx, :]
+            mask_seq_batch = mask_seq[idx, :]
+            mask_ys_batch = mask_ys[idx, :]
+            predictions = seq2seqmodel.forward(seqs_batch, mask_seq_batch, ys_batch, get_att=False)
+            # prediction loss
+            pred_loss = F.mse_loss(predictions, ys_batch, reduction='none') * mask_ys_batch
+            pred_loss = pred_loss.mean()
+            optimizer.zero_grad()
+            pred_loss.backward()
+            optimizer.step()
+
+        if epoch % training_epoch_print == 0:
+            print("Training Process Eval")
+            # noinspection PyUnboundLocalVariable
+            print(f'Epoch: {epoch:d}, Loss: {pred_loss.item():.3e}, Learning Rate: {lr:.1e}')
+
+        # TODO: Implement a early stop in training calculating the error in testing
+        if epoch % testing_epoch_print == 0:
+            seq2seqmodel.eval()
+            predictions = seq2seqmodel.forward(seqs, mask_seq, ys, get_att=False)
+            print("Test Process Eval")
+            print(seq2seqmodel.primer_dataset.scale_back_Y(predictions))
+            print(ysT)
+            elapsed = time.time() - start_time
+            pred_loss = F.mse_loss(predictions, ysT, reduction='none')
+            pred_loss = pred_loss.mean()
+            print('Epoch: %d, Loss: %.3e, Time: %.3f, Learning Rate: %.1e'
+                  % (epoch, pred_loss.item(), elapsed, lr))
+            start_time = time.time()

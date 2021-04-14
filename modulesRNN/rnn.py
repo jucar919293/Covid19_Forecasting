@@ -7,16 +7,11 @@ from .weight_init import weight_init
 import random
 from torch.nn.utils.rnn import pad_sequence
 """
-    Starting some variables
-"""
-
-device = torch.device("cpu")
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-dtype = torch.float64
-
-"""
 Classes used in the architectures
 """
+device = torch.device("cpu")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+data_type = torch.float64
 
 
 # noinspection PyAbstractClass
@@ -38,17 +33,17 @@ class InputAttention(nn.Module):
             in_features=self.size_hidden,
             out_features=self.size_seq,
             bias=True
-        )
+        ).to(device, data_type)
         self.linearSignals = nn.Linear(
             in_features=self.size_seq,
             out_features=self.size_seq,
             bias=True
-        )
+        ).to(device, data_type)
         self.linearOut = nn.Linear(
             in_features=self.size_seq,
             out_features=1,
             bias=True
-        )
+        ).to(device, data_type)
         self.soft = nn.Softmax(1)
 
         # init weights
@@ -90,14 +85,14 @@ class EncoderAttention(nn.Module):
         # Creating Attention
         self.attention = InputAttention(size_hidden=self.rnn_out,
                                         n_features=self.dim_seq_in,
-                                        size_seq=self.size_seq).to(device).type(dtype)
+                                        size_seq=self.size_seq)
 
         self.rnn = nn.GRU(
             input_size=self.dim_seq_in,
             hidden_size=self.rnn_out // 2 if self.bidirectional else self.rnn_out,
             num_layers=n_layers,
             batch_first=True,
-        )
+        ).to(device, data_type)
 
         # init weights
         weight_init(self.rnn)
@@ -110,7 +105,7 @@ class EncoderAttention(nn.Module):
         hidden_total = []
 
         seqs_update = seqs.clone()
-        h_t_previous = torch.zeros((seqs.shape[0], self.rnn_out)).unsqueeze(1).to(device).type(dtype)
+        h_t_previous = torch.zeros((seqs.shape[0], self.rnn_out)).unsqueeze(1)
         signal_k = seqs.transpose(1, 2)
         for t in range(seqs.shape[1]):
             h_t_previous_signals = h_t_previous.repeat(1, seqs.shape[-1], 1)
@@ -125,7 +120,7 @@ class EncoderAttention(nn.Module):
             self.e_values_total[str(t)] = e_values_t.squeeze(0).squeeze(-1).detach().numpy()
             self.attention_total[str(t)] = att_values_t.squeeze(0).squeeze(-1).detach().numpy()
 
-        hidden_total = torch.stack(hidden_total, 1).to(device).type(dtype)
+        hidden_total = torch.stack(hidden_total, 1)
         # Pass through first rnn
         latent_seqs = hidden_total * mask  # keep hidden states that correspond to non-zero in seqs
         latent_seqs = latent_seqs.sum(1)  # NOTE: change when doing attention
@@ -166,7 +161,7 @@ class Encoder(nn.Module):
             hidden_size=self.rnn_out // 2 if self.bidirectional else self.rnn_out,
             num_layers=n_layers,
             batch_first=True,
-        )
+        ).to(device, data_type)
         # init weights
         weight_init(self.rnn)
 
@@ -213,7 +208,7 @@ class Decoder(nn.Module):
             hidden_size=hidden_size,
             num_layers=n_layers,
             batch_first=True,
-        )
+        ).to(device, data_type)
 
         self.out_layer = [
             nn.Linear(
@@ -245,18 +240,18 @@ class Decoder(nn.Module):
             nn.LeakyReLU(),
             nn.Dropout(dropout),
         ]
-        self.out_layer = nn.Sequential(*self.out_layer)
+        self.out_layer = nn.Sequential(*self.out_layer).to(device, data_type)
         # init weights
         weight_init(self.rnn)
         weight_init(self.out_layer)
 
-    def forward(self, hidden, k_wk_ahead, ys_batch=None, teacher_forcing_ratio=0.5):
+    def forward(self, hidden, k_wk_ahead, ys=None, teacher_forcing_ratio=0.5):
         """
         Teacher forcing
 
         param k_wk_ahead: how many weeks ahead to forecast
         """
-        inputs = torch.zeros((hidden.shape[0], 1, 1), dtype=dtype).to(device)
+        inputs = torch.zeros((hidden.shape[0], 1, 1)).to(device, data_type)
         # note that hidden should be of (num_layers * num_directions, batch, hidden_size)
         hidden = hidden.unsqueeze(0)  # adding one dimension corresponding to num_layers * num_directions
         outputs = []
@@ -269,11 +264,11 @@ class Decoder(nn.Module):
             hidden = latent_seqs.clone().squeeze(1).unsqueeze(0)
             # select input for next iteration
             if self.training and random.random() < teacher_forcing_ratio:
-                if ys_batch is None:
+                if ys is None:
                     print('ys_batch is required as input for decoder during training')
                     quit()
                 # teacher forcing
-                inputs = ys_batch[:, k]
+                inputs = ys[:, k]
                 inputs = inputs.reshape(-1, 1, 1)
             else:
                 inputs = out
