@@ -2,10 +2,13 @@ import torch
 import pandas as pd
 from epiweeks import Week
 from torch.nn.utils.rnn import pad_sequence
+import torch.nn.functional as F
 import numpy as np
 import time
-
-data_type = torch.float64
+import matplotlib.pyplot as plt
+device = torch.device("cpu")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+data_type = torch.float32
 """
     Useful functions
 """
@@ -36,13 +39,17 @@ def mse_calc(pred, true):
 
 
 # Defining Mean Absolute Percentage Error loss function
-def mape_calc(pred, true):
+def mape_calc(pred, true, mask=None):
     # Get squared difference
     differences = pred - true
     absolute_differences_divided = differences / true
     absolute_differences_divided = absolute_differences_divided.abs()
+    if mask is not None:
+        mask_absolute = absolute_differences_divided * mask
+        mean_absolute_percentage = mask_absolute.mean() * 100
+    else:
+        mean_absolute_percentage = absolute_differences_divided.mean() * 100
     # Get the mean
-    mean_absolute_percentage = absolute_differences_divided.mean() * 100
     return mean_absolute_percentage
 
 
@@ -84,8 +91,9 @@ class Dataset:
 
     # noinspection PyPep8Naming,PyTypeChecker
     def scale_back_Y(self, y):
-        mean = torch.tensor([self.meanY], dtype=data_type)
-        std = torch.tensor([self.stdY], dtype=data_type)
+        mean = torch.tensor([self.meanY], dtype=data_type).to(device)
+        std = torch.tensor([self.stdY], dtype=data_type).to(device)
+        torch.cuda.empty_cache()
         return (y * std) + mean
 
     # noinspection DuplicatedCode
@@ -112,12 +120,12 @@ class Dataset:
             ally_ = self.scaledY[n*stride:n*stride+t]
             allys.append(torch.tensor(ally_))
 
-        seqs = pad_sequence(seqs, batch_first=True).double()
-        ys = pad_sequence(targets, batch_first=True).double()
-        mask_seq = pad_sequence(mask_seq, batch_first=True).double()
-        mask_ys = pad_sequence(mask_ys, batch_first=True).double()
-        allys = pad_sequence(allys, batch_first=True).double()
-        test = seqs[num_seqs-1].unsqueeze(0).double()
+        seqs = pad_sequence(seqs, batch_first=True).to(device, data_type)
+        ys = pad_sequence(targets, batch_first=True).to(device, data_type)
+        mask_seq = pad_sequence(mask_seq, batch_first=True).to(device, data_type)
+        mask_ys = pad_sequence(mask_ys, batch_first=True).to(device, data_type)
+        allys = pad_sequence(allys, batch_first=True).to(device, data_type)
+        test = seqs[num_seqs-1].unsqueeze(0).to(device, data_type)
         if get_test:
             return seqs, ys, mask_seq, mask_ys, allys, test
         else:
@@ -151,35 +159,99 @@ class Dataset:
             ally_ = self.scaledY[:length]
             allys.append(torch.from_numpy(ally_))
 
-        seqs = pad_sequence(seqs, batch_first=True).double()
-        ys = pad_sequence(targets, batch_first=True).double()
-        mask_seq = pad_sequence(mask_seq, batch_first=True).double()
-        mask_ys = pad_sequence(mask_ys, batch_first=True).double()
-        allys = pad_sequence(allys,batch_first=True).double()
+        seqs = pad_sequence(seqs, batch_first=True).to(device, data_type)
+        ys = pad_sequence(targets, batch_first=True).to(device, data_type)
+        mask_seq = pad_sequence(mask_seq, batch_first=True).to(device, data_type)
+        mask_ys = pad_sequence(mask_ys, batch_first=True).to(device, data_type)
+        allys = pad_sequence(allys,batch_first=True).to(device, data_type)
 
         return seqs, ys, mask_seq, mask_ys, allys
 
 
-# noinspection PyPep8Naming,DuplicatedCode
-def trainingModel(seq2seqmodel, lr, epochs, seqs, mask_seq, ys, ysT, mask_ys, allys):
-    N = seqs.shape[0]
-    mini_batch_size = N // 2
-    print(f'Total batch: {N}')
-    print(f'Mini batch: {mini_batch_size}')
+class EarlyStopping(object):
+    def __init__(self, mode='min', min_delta=0, patience=10, percentage=False):
+        self.mode = mode
+        self.min_delta = min_delta
+        self.patience = patience
+        self.best = None
+        self.num_bad_epochs = 0
+        self.is_better = None
+        self._init_is_better(mode, min_delta, percentage)
+
+        if patience == 0:
+            self.is_better = lambda a, b: True
+            self.step = lambda a: False
+
+    def step(self, metrics):
+        if self.best is None:
+            self.best = metrics
+            return False
+
+        if torch.isnan(metrics):
+            return True
+
+        if self.is_better(metrics, self.best):
+            self.num_bad_epochs = 0
+            self.best = metrics
+        else:
+            self.num_bad_epochs += 1
+
+        if self.num_bad_epochs >= self.patience:
+            return True
+
+        return False
+
+    def _init_is_better(self, mode, min_delta, percentage):
+        if mode not in {'min', 'max'}:
+            raise ValueError('mode ' + mode + ' is unknown!')
+        if not percentage:
+            if mode == 'min':
+                self.is_better = lambda a, best: a < best - min_delta
+            if mode == 'max':
+                self.is_better = lambda a, best: a > best + min_delta
+        else:
+            if mode == 'min':
+                self.is_better = lambda a, best: a < best - (
+                            best * min_delta / 100)
+            if mode == 'max':
+                self.is_better = lambda a, best: a > best + (
+                            best * min_delta / 100)
+
+
+# noinspection PyPep8Naming
+def trainingModel(seq2seqmodel, dataset,
+                  lr, epochs,
+                  seqs, mask_seq, ys, ysT, mask_ys, allys,
+                  two_encoder=False, get_att=False
+                  ):
+    loss = []
+    val = []
+    training_epoch_print = 1
+    testing_epoch_print = 1
+    n_batch = seqs.shape[0]
+    mini_batch_size = n_batch // 2
+    print(f'Total Nº batch: {n_batch}')
+    print(f' Nº mini batch: {mini_batch_size}')
     params = list(seq2seqmodel.parameters())
     optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, params), lr=lr)
     start_time = time.time()
-
-    for epoch in range(epochs):
+    stop = EarlyStopping(mode='min', min_delta=1, patience=10, percentage=True)
+    for epoch in range(epochs+1):
         seq2seqmodel.train()
-        for _ in range(N // mini_batch_size):
+        for _ in range(n_batch // mini_batch_size):
             # get batch of data
-            idx = np.random.choice(N, mini_batch_size)
+            idx = np.random.choice(n_batch, mini_batch_size)
             seqs_batch = seqs[idx, :]
             ys_batch = ys[idx, :]
             mask_seq_batch = mask_seq[idx, :]
             mask_ys_batch = mask_ys[idx, :]
-            predictions = seq2seqmodel.forward(seqs_batch, mask_seq_batch, ys_batch, get_att=False)
+            allys_batch = allys[idx, :]
+            # seqs, mask_seqs, allys, ys=None, get_att=False
+            if two_encoder:
+                predictions, att, ev = seq2seqmodel(seqs_batch, mask_seq_batch, allys_batch, ys_batch, get_att=get_att)
+            else:
+                predictions = seq2seqmodel(seqs_batch, mask_seq_batch, ys_batch, get_att=get_att)
+
             # prediction loss
             pred_loss = F.mse_loss(predictions, ys_batch, reduction='none') * mask_ys_batch
             pred_loss = pred_loss.mean()
@@ -188,20 +260,35 @@ def trainingModel(seq2seqmodel, lr, epochs, seqs, mask_seq, ys, ysT, mask_ys, al
             optimizer.step()
 
         if epoch % training_epoch_print == 0:
-            print("Training Process Eval")
+            # print("Training Process Eval")
             # noinspection PyUnboundLocalVariable
-            print(f'Epoch: {epoch:d}, Loss: {pred_loss.item():.3e}, Learning Rate: {lr:.1e}')
-
+            # print(f'Epoch: {epoch:d}, Loss: {pred_loss.item():.4f}, Learning Rate: {lr:.1e}')
+            loss_send = 100*pred_loss.item()/(ys.shape[0]*4 - 10)
+            loss.append(loss_send)
+            # loss.append(pred_loss.item())
         # TODO: Implement a early stop in training calculating the error in testing
         if epoch % testing_epoch_print == 0:
             seq2seqmodel.eval()
-            predictions = seq2seqmodel.forward(seqs, mask_seq, ys, get_att=False)
-            print("Test Process Eval")
-            print(seq2seqmodel.primer_dataset.scale_back_Y(predictions))
-            print(ysT)
+            if two_encoder:
+                predictions, att, ev = seq2seqmodel(seqs, mask_seq, allys, get_att=get_att)
+            else:
+                predictions = seq2seqmodel(seqs, mask_seq, get_att=get_att)
+            # print("Test Process Eval")
+            # print("Predictions:")
+            # print(dataset.scale_back_Y(predictions))
+            # print("Real Values:")
+            # print(ysT[:ys.shape[0]])
             elapsed = time.time() - start_time
-            pred_loss = F.mse_loss(predictions, ysT, reduction='none')
-            pred_loss = pred_loss.mean()
-            print('Epoch: %d, Loss: %.3e, Time: %.3f, Learning Rate: %.1e'
-                  % (epoch, pred_loss.item(), elapsed, lr))
+            # val_loss = mape_calc(dataset.scale_back_Y(predictions), ysT[:ys.shape[0]]) / (4*predictions.shape[0])
+            val_loss = (mape_calc(dataset.scale_back_Y(predictions), ysT[:ys.shape[0]], abs(mask_ys-1)) / 4)
+            val_loss = val_loss.to(torch.device("cpu"))
+            val.append(val_loss)
+            have_to_stop = stop.step(val_loss)
+            print(stop.best)
+            if have_to_stop:
+                break
+            # print("Testing Process Eval")
+            # print('Epoch: %d, Validation: %.4f, Time: %.3f, Learning Rate: %.1e'
+            #      % (epoch, val_loss, elapsed, lr))
             start_time = time.time()
+    return val, loss

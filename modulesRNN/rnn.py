@@ -11,7 +11,7 @@ Classes used in the architectures
 """
 device = torch.device("cpu")
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-data_type = torch.float64
+data_type = torch.float32
 
 
 # noinspection PyAbstractClass
@@ -33,17 +33,17 @@ class InputAttention(nn.Module):
             in_features=self.size_hidden,
             out_features=self.size_seq,
             bias=True
-        ).to(device, data_type)
+        )
         self.linearSignals = nn.Linear(
             in_features=self.size_seq,
             out_features=self.size_seq,
             bias=True
-        ).to(device, data_type)
+        )
         self.linearOut = nn.Linear(
             in_features=self.size_seq,
             out_features=1,
             bias=True
-        ).to(device, data_type)
+        )
         self.soft = nn.Softmax(1)
 
         # init weights
@@ -58,6 +58,7 @@ class InputAttention(nn.Module):
         tan_sum = torch.tanh(sum_linears)
         e_values_t = self.linearOut(tan_sum)  # eValues = (V(tanh(H*W1 +b1+x*W2 +b2)+b3)
         att_values_t = self.soft(e_values_t).squeeze(-1)
+        torch.cuda.empty_cache()
         return e_values_t, att_values_t
 
 
@@ -92,7 +93,7 @@ class EncoderAttention(nn.Module):
             hidden_size=self.rnn_out // 2 if self.bidirectional else self.rnn_out,
             num_layers=n_layers,
             batch_first=True,
-        ).to(device, data_type)
+        )
 
         # init weights
         weight_init(self.rnn)
@@ -105,7 +106,7 @@ class EncoderAttention(nn.Module):
         hidden_total = []
 
         seqs_update = seqs.clone()
-        h_t_previous = torch.zeros((seqs.shape[0], self.rnn_out)).unsqueeze(1)
+        h_t_previous = torch.zeros((seqs.shape[0], self.rnn_out)).unsqueeze(1).to(device, data_type)
         signal_k = seqs.transpose(1, 2)
         for t in range(seqs.shape[1]):
             h_t_previous_signals = h_t_previous.repeat(1, seqs.shape[-1], 1)
@@ -113,24 +114,28 @@ class EncoderAttention(nn.Module):
             e_values_t, att_values_t = self.attention(signal_k, h_t_previous_signals)
             seqs_update[:, t, :] = att_values_t * seqs[:, t, :]
             # Updating values for next step t+1
-            h_t = self.rnn(seqs_update.clone())[0]
+            h_t = self.rnn(seqs_update.clone())[0].to(data_type)
             hidden_total.append(h_t[:, t, :])
             h_t_previous = h_t[:, t, :].clone().unsqueeze(1)
 
-            self.e_values_total[str(t)] = e_values_t.squeeze(0).squeeze(-1).detach().numpy()
-            self.attention_total[str(t)] = att_values_t.squeeze(0).squeeze(-1).detach().numpy()
+            self.e_values_total[str(t)] = e_values_t.squeeze(0).squeeze(-1).detach().cpu().numpy()
+            self.attention_total[str(t)] = att_values_t.squeeze(0).squeeze(-1).detach().cpu().numpy()
+            torch.cuda.empty_cache()
 
         hidden_total = torch.stack(hidden_total, 1)
         # Pass through first rnn
         latent_seqs = hidden_total * mask  # keep hidden states that correspond to non-zero in seqs
         latent_seqs = latent_seqs.sum(1)  # NOTE: change when doing attention
         if self.training and not get_att:
+            torch.cuda.empty_cache()
             return latent_seqs, self.e_values_total, self.attention_total
         elif get_att:
             df_a = pd.DataFrame(self.attention_total)
             df_e = pd.DataFrame(self.e_values_total)
+            torch.cuda.empty_cache()
             return latent_seqs, df_e, df_a
         else:
+            torch.cuda.empty_cache()
             return latent_seqs, self.e_values_total, self.attention_total
         # pdb.set_trace()
         # pdb.set_trace()
@@ -161,7 +166,7 @@ class Encoder(nn.Module):
             hidden_size=self.rnn_out // 2 if self.bidirectional else self.rnn_out,
             num_layers=n_layers,
             batch_first=True,
-        ).to(device, data_type)
+        )
         # init weights
         weight_init(self.rnn)
 
@@ -208,7 +213,7 @@ class Decoder(nn.Module):
             hidden_size=hidden_size,
             num_layers=n_layers,
             batch_first=True,
-        ).to(device, data_type)
+        )
 
         self.out_layer = [
             nn.Linear(
@@ -240,7 +245,7 @@ class Decoder(nn.Module):
             nn.LeakyReLU(),
             nn.Dropout(dropout),
         ]
-        self.out_layer = nn.Sequential(*self.out_layer).to(device, data_type)
+        self.out_layer = nn.Sequential(*self.out_layer)
         # init weights
         weight_init(self.rnn)
         weight_init(self.out_layer)
@@ -273,5 +278,6 @@ class Decoder(nn.Module):
             else:
                 inputs = out
             inputs = inputs
+        torch.cuda.empty_cache()
         outputs = torch.stack(outputs, 1).squeeze()
         return outputs
