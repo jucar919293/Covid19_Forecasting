@@ -1,8 +1,15 @@
 import torch
 from epiweeks import Week
 from modulesRNN.utils import Dataset, trainingModel
-from seq2seqModels.models import Encoder2Decoder, Input2EncoderDecoder, InputEncoderDecoder, EncoderDecoder
+from seq2seqModels.models import InputEncoderDecoder,\
+                                 EncoderDecoder,\
+                                 EncoderDecoderHidden,\
+                                 InputEncoderDecoderHidden,\
+                                 EncoderAttentionDecoder,\
+                                 InputEncoderAttentionDecoder
+
 import matplotlib.pyplot as plt
+import gc
 
 device = torch.device("cpu")
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -13,10 +20,15 @@ data_type = torch.float32
 """
 # Introduce the path were the data is storage
 data_path = './data/train_data_weekly_vEW202105.csv'
-model_path = ['./trainedModels/Windowed/Input2ED/',
-              './trainedModels/Windowed/InputED/',
-              './trainedModels/Windowed/2ED/',
-              './trainedModels/Windowed/ED/']
+model_path_or = './trainedModels/'
+version_models = ['SimpleForm/', 'Windowed/', 'WindowedHidden/', 'WindowedTemporal/']
+aproaches = ['ED', 'InputED']
+
+version_model = version_models[3]
+aproach = aproaches[0]
+model_path_save = model_path_or + version_model + aproach + '/'
+# Path de figs
+path_figs = model_path_or + version_model + 'Figs/'
 
 # Select future target
 wk_ahead = 4
@@ -30,7 +42,8 @@ weeks = [Week.fromstring(y) for y in weeks_strings]
 #            'LA', 'MA', 'MD', 'ME', 'MI', 'MN', 'MO', 'MS', 'MT', 'NC', 'ND', 'NE', 'NH', 'NJ', 'NM', 'NV', 'NY', 'OH'
 #            'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VA', 'VT', 'WA', 'WI', 'WV', 'WY']
 
-regions = ['X', 'CA', 'FL', 'GA', 'IL', 'LA', 'PA', 'TX', 'WA']
+# regions = ['X', 'CA', 'FL', 'GA', 'IL', 'LA', 'PA', 'TX', 'WA']
+regions = ['X', 'TX', 'GA', 'LA', 'MO']
 # regions = ['X']
 
 # Select signals
@@ -48,76 +61,97 @@ RNN_DIM = 128
 # Number of external signals
 n_signals = len(include_col) - 1
 
-# Path de figs
-path_figs = './trainedModels/Windowed/Figs/'
-
 
 # Main function
 # noinspection PyPep8Naming
 def training_process():
     last_week_data = Week.fromstring('202106')  # Total weeks: 49
-    model_path_save = model_path[1]
     T = 10
     stride = 1
     total_weeks = 49
-    n_min_seqs = 10  # Goes from 1 to 31(totalWeeks - T + stride / stride) - weakAhead
+    n_min_seqs = 5  # Goes from 5 to 31(totalWeeks - T + stride / stride) - weakAhead
     max_val_week = total_weeks - wk_ahead + 1
     min_val_week = T + n_min_seqs - 1
 
     print("Initializing ...")
-
+    print(device)
     for region in regions:
 
         print(f'Region: {region}')
         total_data_seq = Dataset(data_path, last_week_data, region, include_col, wk_ahead)
         _, ysT, _, _, allyT = total_data_seq.create_seqs_limited(T, stride, RNN_DIM, get_test=False)
+        # _, ysT, _, _, allyT = total_data_seq.create_seqs(n_min_seqs, RNN_DIM)
         ysT = total_data_seq.scale_back_Y(ysT)
         yT = total_data_seq.scale_back_Y(allyT[-1])
 
         for ew, ew_str in zip(weeks[min_val_week:max_val_week], weeks_strings[min_val_week-1:max_val_week-1]):
             print(f'Week:{ew}')
-            fig, ax = plt.subplots()
+            fig, ax = plt.subplots(num=1, clear=True)
+            fig.subplots_adjust(right=0.80)
             twin1 = ax.twinx()
+            twin2 = ax.twinx()
+            twin2.spines["right"].set_position(("axes", 1.13))
             dataset = Dataset(data_path, ew, region, include_col, wk_ahead)
+            # seqs, ys, mask_seq, mask_ys, allys = dataset.create_seqs(n_min_seqs, RNN_DIM)
             seqs, ys, mask_seq, mask_ys, allys, test = dataset.create_seqs_limited(T, stride, RNN_DIM, get_test=True)
+            allys = dataset.scale_back_Y(allys)
             # Creating seq2seqModel
-            seqModel = InputEncoderDecoder(T, seqs.shape[-1], RNN_DIM, wk_ahead)
+            # seqModel = EncoderDecoder(seqs.shape[-1], RNN_DIM, wk_ahead)  # Change
+            # seqModel = InputEncoderDecoder(T, seqs.shape[-1], RNN_DIM, wk_ahead)
+            seqModel = EncoderAttentionDecoder(RNN_DIM, seqs.shape[-1], RNN_DIM, wk_ahead)
+            # seqModel = InputEncoderAttentionDecoder(T, seqs.shape[-1], RNN_DIM, wk_ahead)
+            # seqModel = InputEncoderDecoderHidden(T, seqs.shape[-1], RNN_DIM, wk_ahead)
+            # seqModel = EncoderDecoderHidden(seqs.shape[-1], RNN_DIM, wk_ahead)
 
-            # Change device
             # Trainig process
-            val, loss = trainingModel(seqModel, dataset,
-                                      0.001, 500,
-                                      seqs, mask_seq, ys, ysT, mask_ys, allys,
-                                      two_encoder=False,
-                                      get_att=False)
+            val, loss, test = trainingModel(seqModel, dataset,
+                                            0.001, 500, 0.1, 6,
+                                            seqs, mask_seq, ys, mask_ys, allys, ysT,
+                                            allys_needed=True,
+                                            get_att=False)
             total_epoch1 = len(val)
-            twin1.plot(range(total_epoch1), val, c='orange')
-            twin1.plot([])
-            ax.plot(range(total_epoch1), loss, c='blue')
+            twin1.plot(range(total_epoch1), val, c='r')
+            twin2.plot(range(total_epoch1), test, c='g')
+            ax.plot(range(total_epoch1), loss, c='b')
             # fig.show()
-            val, loss = trainingModel(seqModel, dataset,
-                                      0.0001, 500,
-                                      seqs, mask_seq, ys, ysT, mask_ys, allys,
-                                      two_encoder=False,
-                                      get_att=False)
+            val, loss, test = trainingModel(seqModel, dataset,
+                                            0.0001, 500, 0.2, 3,
+                                            seqs, mask_seq, ys, mask_ys, allys, ysT,
+                                            allys_needed=True,
+                                            get_att=False)
             # Ploting loss and eval
             total_epoch2 = len(val) - 1
-            twin1.plot(range(total_epoch1-1, total_epoch1 + total_epoch2), val, c='orange')
-            twin1.plot([])
-            ax.plot(range(total_epoch1-1, total_epoch1 + total_epoch2), loss, c='blue')
-            twin1.legend(['Validation', 'Loss'])
+            twin1.plot(range(total_epoch1-1, total_epoch1 + total_epoch2), val, c='r')
+            twin2.plot(range(total_epoch1-1, total_epoch1 + total_epoch2), test, c='g')
+            ax.plot(range(total_epoch1-1, total_epoch1 + total_epoch2), loss, c='b')
 
-            val, loss = trainingModel(seqModel, dataset,
-                                      0.00001, 500,
-                                      seqs, mask_seq, ys, ysT, mask_ys, allys,
-                                      two_encoder=False,
-                                      get_att=False)
+            val, loss, test = trainingModel(seqModel, dataset,
+                                            0.00001, 500, 0.1, 2,
+                                            seqs, mask_seq, ys, mask_ys, allys, ysT,
+                                            allys_needed=True,
+                                            get_att=False)
             # Ploting loss and eval
             total_epoch3 = len(val) - 1
-            twin1.plot(range(total_epoch1 + total_epoch2-1, total_epoch1+total_epoch2+total_epoch3), val, c='orange')
-            twin1.plot([])
-            ax.plot(range(total_epoch1 + total_epoch2-1, total_epoch1+total_epoch2+total_epoch3), loss, c='blue')
-            twin1.legend(['Validation', 'Loss'])
+            p1, = twin1.plot(range(total_epoch1 + total_epoch2-1, total_epoch1+total_epoch2+total_epoch3),
+                             val, c='r', label='Val')
+            p2, = twin2.plot(range(total_epoch1 + total_epoch2-1, total_epoch1+total_epoch2+total_epoch3),
+                             test, c='g', label='Test')
+            p3, = ax.plot(range(total_epoch1 + total_epoch2-1, total_epoch1+total_epoch2+total_epoch3), loss,
+                          c='b', label='Loss')
+            ax.set_ylabel("Loss")
+            twin1.set_ylabel("Val")
+            twin2.set_ylabel("Test")
+            ax.yaxis.label.set_color(p3.get_color())
+            twin1.yaxis.label.set_color(p1.get_color())
+            twin2.yaxis.label.set_color(p2.get_color())
+            tkw = dict(size=4, width=1.5)
+            ax.tick_params(axis='y', colors=p3.get_color(), **tkw)
+            twin1.tick_params(axis='y', colors=p1.get_color(), **tkw)
+            twin2.tick_params(axis='y', colors=p2.get_color(), **tkw)
+            ax.tick_params(axis='x', **tkw)
+
+            ax.legend(handles=[p1, p2, p3])
+
             # fig.show()
             # plt.close()
             torch.cuda.empty_cache()
@@ -125,8 +159,14 @@ def training_process():
         # Saving the model and plot
             path_model = model_path_save + region + '_' + ew_str + '_' + '.pth'
             torch.save(seqModel.state_dict(), path_model)
-            name_image = region + '_' + ew_str + '_' + 'InputED' + '.png'
+            name_image = region + '_' + ew_str + '_' + aproach + '.png'
             fig.savefig(path_figs + name_image)
+            ax.clear()
+            twin1.clear()
+            twin2.clear()
+            plt.cla()
+            fig.clf()
+            gc.collect()
         # plt.show()
 
 

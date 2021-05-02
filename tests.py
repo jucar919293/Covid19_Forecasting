@@ -1,6 +1,6 @@
 from modulesRNN.utils import Dataset
 from epiweeks import Week
-
+from seq2seqModels.models import EncoderAttentionDecoder, EncoderDecoderHidden, InputEncodeAttentionDecoder
 # General variables
 data_path_dataset = './data/train_data_weekly_vEW202105.csv'
 data_path_visual = './data/train_data_weekly_noscale_vEW202105.csv'
@@ -20,5 +20,10 @@ wk_ahead = 4
 region = regions[0]
 last_week_data = weeks[-1]
 dataset = Dataset(data_path_dataset, last_week_data, region, include_col, wk_ahead)
-
-seqs, ys, mask_ys, allys = dataset.create_seqs_limited(20, 1, False)
+T = 20
+stride = 1
+RNN_DIM = 128
+seqs, ys, mask_seq, mask_ys, allys, test = dataset.create_seqs_limited(T, stride, RNN_DIM, get_test=True)
+# seqModel = EncoderDecoderHidden(seqs.shape[-1], RNN_DIM, wk_ahead)
+seqModel = InputEncodeAttentionDecoder(T, seqs.shape[-1], RNN_DIM, wk_ahead)
+A = seqModel.forward(seqs, mask_seq, allys, ys)

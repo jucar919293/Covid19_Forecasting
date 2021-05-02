@@ -1,6 +1,6 @@
 import torch.nn as nn
 import torch
-from modulesRNN.rnn import Encoder, Decoder, EncoderAttention
+from modulesRNN.rnn import Encoder, Decoder, EncoderAttention, DecoderHidden, DecoderAttention
 
 device = torch.device("cpu")
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -72,6 +72,150 @@ class InputEncoderDecoder(nn.Module):
         c_vector, e_values, attention_values = self.encoder(seqs, mask_seq, get_att=get_att)
         # Using decoder:
         predictions = self.decoder(c_vector, self.wk_ahead, ys=ys)
+        if get_att:
+            return predictions, e_values, attention_values
+        else:
+            return predictions
+
+
+"""
+    Seq2seq model: encoder Hiden-decoder model
+"""
+
+
+class EncoderDecoderHidden(nn.Module):
+    def __init__(self, n_signals, rnn_dim, wk_ahead):
+        super(EncoderDecoderHidden, self).__init__()
+        self.wk_ahead = wk_ahead
+        self.n_signals = n_signals
+        # Creating encoder:
+        self.encoder = Encoder(dim_seq_in=self.n_signals,
+                               rnn_out=rnn_dim,
+                               n_layers=1,
+                               bidirectional=False, ).to(device, data_type)
+
+        self.decoder = DecoderHidden(dim_seq_in=rnn_dim+1,
+                                     rnn_out=int(rnn_dim),
+                                     n_layers=1,
+                                     bidirectional=False,
+                                     dim_out=1,).to(device, data_type)
+
+    # noinspection PyPep8Naming,PyTypeChecker
+
+    def forward(self, seqs, mask_seqs, allys, ys=None, **kwargs):
+        # forward pass
+        # Using encoder:
+        c_vector = self.encoder(seqs, mask_seqs, all_hidden=True)
+        # Using decoder:
+        predictions = self.decoder(c_vector, self.wk_ahead, allys, ys=ys)
+        return predictions
+
+
+"""
+    Seq2seq model: Encoder Temporal-Decoder model
+"""
+
+
+class EncoderAttentionDecoder(nn.Module):
+    def __init__(self, size_seq, n_signals, rnn_dim, wk_ahead):
+        super(EncoderAttentionDecoder, self).__init__()
+        self.wk_ahead = wk_ahead
+        self.n_signals = n_signals
+        # Creating encoder:
+        self.encoder = Encoder(dim_seq_in=self.n_signals,
+                               rnn_out=rnn_dim,
+                               n_layers=1,
+                               bidirectional=False, ).to(device, data_type)
+
+        self.decoder = DecoderAttention(dim_seq_in=rnn_dim+1,
+                                        rnn_out=int(rnn_dim),
+                                        n_layers=1,
+                                        size_seq=size_seq,
+                                        bidirectional=False,
+                                        dim_out=1,).to(device, data_type)
+
+    # noinspection PyPep8Naming,PyTypeChecker
+
+    def forward(self, seqs, mask_seqs, allys, ys=None, **kwargs):
+        # forward pass
+        # Using encoder:
+        c_vector = self.encoder(seqs, mask_seqs, all_hidden=True)
+        # Using decoder:
+        predictions = self.decoder(c_vector, self.wk_ahead, allys, ys=ys)
+        return predictions
+
+
+"""
+    Seq2seq model: Input-encoder Hiden-decoder model
+"""
+
+
+class InputEncoderAttentionDecoder(nn.Module):
+    def __init__(self, size_seq, n_signals, rnn_dim, wk_ahead):
+        super(InputEncoderAttentionDecoder, self).__init__()
+
+        self.wk_ahead = wk_ahead
+        self.size_seq = size_seq
+        self.n_signals = n_signals
+        # Creating encoder:
+        self.encoder = EncoderAttention(dim_seq_in=self.n_signals,
+                                        rnn_out=rnn_dim,
+                                        n_layers=1,
+                                        size_seq=self.size_seq,
+                                        bidirectional=False, ).to(device, data_type)
+
+        self.decoder = DecoderAttention(dim_seq_in=rnn_dim+1,
+                                        rnn_out=int(rnn_dim),
+                                        n_layers=1,
+                                        size_seq=rnn_dim,
+                                        bidirectional=False,
+                                        dim_out=1,).to(device, data_type)
+
+    def forward(self, seqs, mask_seq, allys, ys=None, get_att=False):
+
+        # forward pass
+        # Using encoder:
+        c_vector, e_values, attention_values = self.encoder(seqs, mask_seq, get_att=get_att, all_hidden=True)
+        # Using decoder:
+        predictions = self.decoder(c_vector, self.wk_ahead, allys, ys=ys)
+        if get_att:
+            return predictions, e_values, attention_values
+        else:
+            return predictions
+
+
+"""
+    Seq2seq model: Input-encoder Hiden-decoder model
+"""
+
+
+class InputEncoderDecoderHidden(nn.Module):
+    def __init__(self, size_seq, n_signals, rnn_dim, wk_ahead):
+        super(InputEncoderDecoderHidden, self).__init__()
+
+        self.wk_ahead = wk_ahead
+        self.size_seq = size_seq
+        self.n_signals = n_signals
+        # Creating encoder:
+        self.encoder = EncoderAttention(dim_seq_in=self.n_signals,
+                                        rnn_out=rnn_dim,
+                                        n_layers=1,
+                                        size_seq=self.size_seq,
+                                        bidirectional=False, ).to(device, data_type)
+
+        self.decoder = DecoderHidden(dim_seq_in=rnn_dim+1,
+                                     rnn_out=int(rnn_dim),
+                                     n_layers=1,
+                                     bidirectional=False,
+                                     dim_out=1, ).to(device, data_type)
+
+    def forward(self, seqs, mask_seq, allys, ys=None, get_att=False):
+
+        # forward pass
+        # Using encoder:
+        c_vector, e_values, attention_values = self.encoder(seqs, mask_seq, get_att=get_att, all_hidden=True)
+        # Using decoder:
+        predictions = self.decoder(c_vector, self.wk_ahead, allys, ys=ys)
         if get_att:
             return predictions, e_values, attention_values
         else:

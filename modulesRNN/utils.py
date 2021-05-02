@@ -25,6 +25,7 @@ def mae_calc(pred, true):
     absolute_differences = differences.abs()
     # Get the mean
     mean_absolute_error = absolute_differences.mean()
+    torch.cuda.empty_cache()
     return mean_absolute_error
 
 
@@ -35,6 +36,7 @@ def mse_calc(pred, true):
     squared_differences = differences ** 2
     # Get the mean
     mean_squared_error = squared_differences.mean()
+    torch.cuda.empty_cache()
     return mean_squared_error
 
 
@@ -44,6 +46,8 @@ def mape_calc(pred, true, mask=None):
     differences = pred - true
     absolute_differences_divided = differences / true
     absolute_differences_divided = absolute_differences_divided.abs()
+    torch.cuda.empty_cache()
+
     if mask is not None:
         mask_absolute = absolute_differences_divided * mask
         mean_absolute_percentage = mask_absolute.mean() * 100
@@ -59,6 +63,7 @@ def rmse_calc(pred, true):
     squared_differences = differences ** 2
     # Get the mean
     root_mean_squared_error = (squared_differences.mean().sqrt())
+    torch.cuda.empty_cache()
     return root_mean_squared_error
 
 
@@ -131,6 +136,41 @@ class Dataset:
         else:
             return seqs, ys, mask_seq, mask_ys, allys
 
+    # TODO: Create seqs that only take some past values, not all
+    def create_seqs_limited2(self, t, stride, rnn_dim, get_test=False):
+        # convert to small sequences for training, all length T
+        seqs = []
+        targets = []
+        mask_seq = []
+        mask_ys = []
+        allys = []
+        num_seqs = (self.x.shape[0]-t+stride) // stride
+        for n in range(num_seqs):  # x.shape: [total_size_data, number_signals]
+            seqs.append(torch.tensor(self.x[n*stride:n*stride+t, :]))
+            last_data = t + stride*n - 1
+            y_ = self.scaledY[last_data + 1:last_data + 1 + self.wk_ahead]
+            targets.append(torch.tensor(y_))
+            # Mask Sequences
+            m_seq = torch.zeros((t, rnn_dim))  # NOTE: this is useful for temporal attention
+            m_seq[-1] = 1
+            mask_seq.append(m_seq)
+            # Mask targets
+            mask_ys.append(torch.ones(len(y_)))
+            # All sequence
+            ally_ = self.scaledY[n*stride:n*stride+t]
+            allys.append(torch.tensor(ally_))
+
+        seqs = pad_sequence(seqs, batch_first=True).to(device, data_type)
+        ys = pad_sequence(targets, batch_first=True).to(device, data_type)
+        mask_seq = pad_sequence(mask_seq, batch_first=True).to(device, data_type)
+        mask_ys = pad_sequence(mask_ys, batch_first=True).to(device, data_type)
+        allys = pad_sequence(allys, batch_first=True).to(device, data_type)
+        test = seqs[num_seqs-1].unsqueeze(0).to(device, data_type)
+        if get_test:
+            return seqs, ys, mask_seq, mask_ys, allys, test
+        else:
+            return seqs, ys, mask_seq, mask_ys, allys
+
     def create_seqs(self, min_len_size, rnn_dim):
         """
         Manipulate data to make it suitable for RNN
@@ -169,7 +209,7 @@ class Dataset:
 
 
 class EarlyStopping(object):
-    def __init__(self, mode='min', min_delta=0, patience=10, percentage=False):
+    def __init__(self, mode='min', min_delta=0.0, patience=10, percentage=False):
         self.mode = mode
         self.min_delta = min_delta
         self.patience = patience
@@ -220,14 +260,15 @@ class EarlyStopping(object):
 
 # noinspection PyPep8Naming
 def trainingModel(seq2seqmodel, dataset,
-                  lr, epochs,
-                  seqs, mask_seq, ys, ysT, mask_ys, allys,
-                  two_encoder=False, get_att=False
+                  lr, epochs, min_delta, patience,
+                  seqs, mask_seq, ys, mask_ys, allys, ysT,
+                  allys_needed=False, get_att=False
                   ):
     loss = []
     val = []
-    training_epoch_print = 1
-    testing_epoch_print = 1
+    test = []
+    training_epoch_print = 20
+    testing_epoch_print = 20
     n_batch = seqs.shape[0]
     mini_batch_size = n_batch // 2
     print(f'Total Nº batch: {n_batch}')
@@ -235,7 +276,7 @@ def trainingModel(seq2seqmodel, dataset,
     params = list(seq2seqmodel.parameters())
     optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, params), lr=lr)
     start_time = time.time()
-    stop = EarlyStopping(mode='min', min_delta=1, patience=10, percentage=True)
+    stop = EarlyStopping(mode='min', min_delta=min_delta, patience=patience, percentage=False)
     for epoch in range(epochs+1):
         seq2seqmodel.train()
         for _ in range(n_batch // mini_batch_size):
@@ -247,8 +288,8 @@ def trainingModel(seq2seqmodel, dataset,
             mask_ys_batch = mask_ys[idx, :]
             allys_batch = allys[idx, :]
             # seqs, mask_seqs, allys, ys=None, get_att=False
-            if two_encoder:
-                predictions, att, ev = seq2seqmodel(seqs_batch, mask_seq_batch, allys_batch, ys_batch, get_att=get_att)
+            if allys_needed:
+                predictions = seq2seqmodel(seqs_batch, mask_seq_batch, allys_batch, ys_batch, get_att=get_att)
             else:
                 predictions = seq2seqmodel(seqs_batch, mask_seq_batch, ys_batch, get_att=get_att)
 
@@ -259,18 +300,18 @@ def trainingModel(seq2seqmodel, dataset,
             pred_loss.backward()
             optimizer.step()
 
+        # TODO: Improve graphs of training
         if epoch % training_epoch_print == 0:
             # print("Training Process Eval")
             # noinspection PyUnboundLocalVariable
-            # print(f'Epoch: {epoch:d}, Loss: {pred_loss.item():.4f}, Learning Rate: {lr:.1e}')
-            loss_send = 100*pred_loss.item()/(ys.shape[0]*4 - 10)
+            loss_send = pred_loss.item()
             loss.append(loss_send)
+            # print(f'Epoch: {epoch:d}, Learning Rate: {lr:.1e}')
             # loss.append(pred_loss.item())
-        # TODO: Implement a early stop in training calculating the error in testing
         if epoch % testing_epoch_print == 0:
             seq2seqmodel.eval()
-            if two_encoder:
-                predictions, att, ev = seq2seqmodel(seqs, mask_seq, allys, get_att=get_att)
+            if allys_needed:
+                predictions = seq2seqmodel(seqs, mask_seq, allys, ys, get_att=get_att)
             else:
                 predictions = seq2seqmodel(seqs, mask_seq, get_att=get_att)
             # print("Test Process Eval")
@@ -280,15 +321,23 @@ def trainingModel(seq2seqmodel, dataset,
             # print(ysT[:ys.shape[0]])
             elapsed = time.time() - start_time
             # val_loss = mape_calc(dataset.scale_back_Y(predictions), ysT[:ys.shape[0]]) / (4*predictions.shape[0])
-            val_loss = (mape_calc(dataset.scale_back_Y(predictions), ysT[:ys.shape[0]], abs(mask_ys-1)) / 4)
+            test_loss = (mape_calc(dataset.scale_back_Y(predictions), ysT[:ys.shape[0]], mask_ys))
+            test_loss = (test_loss * ys.shape[0]*4) / ((ys.shape[0]*4)-10)
+            test.append(test_loss.to(torch.device("cpu")))
+            val_loss = (mape_calc(dataset.scale_back_Y(predictions), ysT[:ys.shape[0]], abs(mask_ys-1)))
+            val_loss = (val_loss * ys.shape[0]*4) / 4
             val_loss = val_loss.to(torch.device("cpu"))
             val.append(val_loss)
-            have_to_stop = stop.step(val_loss)
-            print(stop.best)
+            have_to_stop = stop.step(test_loss)
+            # print(stop.best)
             if have_to_stop:
+                print(f'Epoch: {epoch:d}, Learning Rate: {lr:.1e}')
+                print(dataset.scale_back_Y(predictions))
+                # print("Real Values:")
+                print(ysT[:ys.shape[0]])
                 break
             # print("Testing Process Eval")
             # print('Epoch: %d, Validation: %.4f, Time: %.3f, Learning Rate: %.1e'
             #      % (epoch, val_loss, elapsed, lr))
             start_time = time.time()
-    return val, loss
+    return val, loss, test
