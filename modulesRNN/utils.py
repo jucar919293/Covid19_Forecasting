@@ -80,7 +80,7 @@ class Dataset:
         self.df['epiweek'] = self.df.loc[:, 'epiweek'].apply(convert_to_epiweek)
 
         # subset data using init parameters
-        self.df = self.df[(self.df["epiweek"] < last_epi_week) & (self.df["region"] == region)]
+        self.df = self.df[(self.df["epiweeko"] < last_epi_week) & (self.df["region"] == region)]
         self.df = self.df[include_col]
 
         # get data as array
