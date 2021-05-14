@@ -1,6 +1,7 @@
 import torch.nn as nn
 import torch
-from modulesRNN.rnn import Encoder, Decoder, EncoderAttention, DecoderHidden, DecoderAttention
+from modulesRNN.rnn import Encoder, Decoder, EncoderAttention, DecoderHidden, DecoderAttention, EncoderAttentionv2, \
+    Decoder4Out
 
 device = torch.device("cpu")
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -58,6 +59,45 @@ class InputEncoderDecoder(nn.Module):
                                         n_layers=1,
                                         size_seq=self.size_seq,
                                         bidirectional=False, ).to(device, data_type)
+
+        self.decoder = Decoder(dim_seq_in=1,
+                               rnn_out=int(rnn_dim),
+                               n_layers=1,
+                               bidirectional=False,
+                               dim_out=1, ).to(device, data_type)
+
+    def forward(self, seqs, mask_seq, ys=None, get_att=False):
+
+        # forward pass
+        # Using encoder:
+        c_vector, e_values, attention_values = self.encoder(seqs, mask_seq, get_att=get_att)
+        # Using decoder:
+        predictions = self.decoder(c_vector, self.wk_ahead, ys=ys)
+        if get_att:
+            return predictions, e_values, attention_values
+        else:
+            return predictions
+
+
+"""
+    Seq2seq model: Input Attention Encoder-Decoder model
+"""
+
+
+# noinspection PyAbstractClass,DuplicatedCode,PyTypeChecker,PyPep8Naming
+class InputEncoderv2Decoder(nn.Module):
+    def __init__(self, size_seq, n_signals, rnn_dim, wk_ahead):
+        super(InputEncoderv2Decoder, self).__init__()
+
+        self.wk_ahead = wk_ahead
+        self.size_seq = size_seq
+        self.n_signals = n_signals
+        # Creating encoder:
+        self.encoder = EncoderAttentionv2(dim_seq_in=self.n_signals,
+                                          rnn_out=rnn_dim,
+                                          n_layers=1,
+                                          size_seq=self.size_seq,
+                                          bidirectional=False, ).to(device, data_type)
 
         self.decoder = Decoder(dim_seq_in=1,
                                rnn_out=int(rnn_dim),
@@ -197,11 +237,11 @@ class InputEncoderDecoderHidden(nn.Module):
         self.size_seq = size_seq
         self.n_signals = n_signals
         # Creating encoder:
-        self.encoder = EncoderAttention(dim_seq_in=self.n_signals,
-                                        rnn_out=rnn_dim,
-                                        n_layers=1,
-                                        size_seq=self.size_seq,
-                                        bidirectional=False, ).to(device, data_type)
+        self.encoder = EncoderAttentionv2(dim_seq_in=self.n_signals,
+                                          rnn_out=rnn_dim,
+                                          n_layers=1,
+                                          size_seq=self.size_seq,
+                                          bidirectional=False, ).to(device, data_type)
 
         self.decoder = DecoderHidden(dim_seq_in=rnn_dim+1,
                                      rnn_out=int(rnn_dim),
@@ -236,31 +276,34 @@ class Input2EncoderDecoder(nn.Module):
         self.n_signals = n_signals
         self.primer_dataset = dataset
         # Creating encoder:
-        self.encoder = EncoderAttention(dim_seq_in=self.n_signals,
-                                        rnn_out=rnn_dim,
-                                        n_layers=1,
-                                        size_seq=self.size_seq,
-                                        bidirectional=False, )
+        self.encoder = EncoderAttentionv2(dim_seq_in=self.n_signals,
+                                          rnn_out=rnn_dim,
+                                          n_layers=1,
+                                          size_seq=self.size_seq,
+                                          bidirectional=False, ).to(device, data_type)
 
         self.encoder2 = Encoder(dim_seq_in=1,  # Change when more signals in seocnd encoder are included
                                 rnn_out=rnn_dim,
                                 n_layers=1,
-                                bidirectional=False, )
+                                bidirectional=False, ).to(device, data_type)
 
         self.decoder = Decoder(dim_seq_in=1,
-                               rnn_out=int(rnn_dim * 2),
+                               rnn_out=int(rnn_dim),
                                n_layers=1,
                                bidirectional=False,
-                               dim_out=1, )
+                               dim_out=1, ).to(device, data_type)
+
+        self.bn1 = torch.nn.BatchNorm1d(num_features=rnn_dim, affine=True).to(device, data_type)
 
     def forward(self, seqs, mask_seqs, allys, ys=None, get_att=False):
         # forward pass
         # Using encoder:
         c_vector, e_values, attention_values = self.encoder(seqs, mask_seqs)
         c_vector2 = self.encoder2(allys.unsqueeze(-1), mask_seqs)
-        concat = torch.cat((c_vector, c_vector2), 1)
+        # concat = torch.cat((c_vector, c_vector2), 1)
+        sum_vec = self.bn1(c_vector.add(c_vector2))
         # Using decoder:
-        predictions = self.decoder(concat, self.wk_ahead, ys)
+        predictions = self.decoder(sum_vec, self.wk_ahead, ys)
         if get_att:
             return predictions, e_values, attention_values
         else:

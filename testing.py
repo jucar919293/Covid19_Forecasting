@@ -6,7 +6,8 @@ from seq2seqModels.models import InputEncoderDecoder,\
                                  EncoderDecoderHidden,\
                                  InputEncoderDecoderHidden,\
                                  EncoderAttentionDecoder,\
-                                 InputEncoderAttentionDecoder
+                                 InputEncoderAttentionDecoder,\
+                                 InputEncoderv2Decoder, Input2EncoderDecoder
 
 import matplotlib.pyplot as plt
 from numpy import array
@@ -24,12 +25,12 @@ data_type = torch.float32
 """
 # Introduce the path were the data is storage
 data_path = './data/train_data_weekly_vEW202105.csv'
-model_path_or = './trainedModels/Firsttry/'
-version_models = ['SimpleForm/', 'Windowed/', 'WindowedHidden/', 'WindowedTemporal/']
+model_path_or = './trainedModels/'
+version_models = ['SimpleForm/', 'Windowed/', 'WindowedHidden/', 'WindowedTemporal/', 'Tests/']
 aproaches = ['ED', 'InputED']
 
-version_model = version_models[3]
-aproach = aproaches[1]
+version_model = version_models[4]
+aproach = aproaches[0]
 model_path_save = model_path_or + version_model + aproach + '/'
 # Path de figs
 path_figs = model_path_or + version_model + 'Figs/'
@@ -47,17 +48,61 @@ weeks = [Week.fromstring(y) for y in weeks_strings]
 #            'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VA', 'VT', 'WA', 'WI', 'WV', 'WY']
 
 # regions = ['X', 'CA', 'FL', 'GA', 'IL', 'LA', 'PA', 'TX', 'WA']
-regions = ['X', 'TX', 'GA', 'LA', 'MO']
-# regions = ['X']
+# regions = ['X', 'TX', 'GA', 'LA', 'MO']
+regions = ['X']
 
 # Select signals
 include_col = ['target_death', 'retail_and_recreation_percent_change_from_baseline',
-               'grocery_and_pharmacy_percent_change_from_baseline', 'parks_percent_change_from_baseline',
-               'transit_stations_percent_change_from_baseline', 'workplaces_percent_change_from_baseline',
-               'residential_percent_change_from_baseline', 'positiveIncrease', 'negativeIncrease',
-               'totalTestResultsIncrease', 'onVentilatorCurrently', 'inIcuCurrently', 'recovered',
-               'hospitalizedIncrease', 'death_jhu_incidence', 'dex_a', 'apple_mobility', 'CLI Percent of Total Visits',
-               'fb_survey_cli']
+               'grocery_and_pharmacy_percent_change_from_baseline',
+               'parks_percent_change_from_baseline',
+               'transit_stations_percent_change_from_baseline',
+               'workplaces_percent_change_from_baseline',
+               'residential_percent_change_from_baseline',
+               'apple_mobility',
+               'dex', 'dex_a',
+               'dex_income_1',
+               'dex_income_1_a',
+               'dex_income_2',
+               'dex_income_2_a',
+               'dex_income_3',
+               'dex_income_3_a',
+               'dex_income_4',
+               'dex_income_4_a',
+               'dex_education_1',
+               'dex_education_1_a',
+               'dex_education_2',
+               'dex_education_2_a',
+               'dex_education_3',
+               'dex_education_3_a',
+               'dex_education_4',
+               'dex_education_4_a',
+               'dex_race_asian',
+               'dex_race_asian_a',
+               'dex_race_black',
+               'dex_race_black_a',
+               'dex_race_hispanic',
+               'dex_race_hispanic_a',
+               'dex_race_white',
+               'dex_race_white_a',
+               'people_total',
+               'people_total_2nd_dose',
+               'covidnet',
+               'positiveIncrease',
+               'negativeIncrease',
+               'totalTestResultsIncrease',
+               'onVentilatorCurrently',
+               'inIcuCurrently'	,
+               'recovered',
+               'hospitalizedIncrease',
+               'Observed Number',
+               'Excess Higher Estimate',
+               'death_jhu_incidence',
+               'fb_survey_cli',
+               'google_survey_cli',
+               'fb_survey_wili',
+               'Number of Facilities Reporting',
+               'CLI Percent of Total Visits']
+
 
 # Dim of rnn hidden states
 RNN_DIM = 128
@@ -69,10 +114,10 @@ n_signals = len(include_col) - 1
 # noinspection DuplicatedCode
 def testing():
     last_week_data = Week.fromstring('202106')  # Total weeks: 49
-    T = 15
+    T = 10
     stride = 1
     total_weeks = 49
-    n_min_seqs = 5  # Goes from 5 to 31(totalWeeks - T + stride / stride) - weakAhead
+    n_min_seqs = 10  # Goes from 5 to 31(totalWeeks - T + stride / stride) - weakAhead
     max_val_week = total_weeks - wk_ahead + 1
     min_val_week = T + n_min_seqs - 1
 
@@ -102,17 +147,16 @@ def testing():
             dataset = Dataset(data_path, ew, region, include_col, wk_ahead)
             # seqs, ys, mask_seq, mask_ys, allys = dataset.create_seqs(n_min_seqs, RNN_DIM)
             seqs, ys, mask_seq, mask_ys, allys, test = dataset.create_seqs_limited(T, stride, RNN_DIM, get_test=True)
-            allys = dataset.scale_back_Y(allys)
+
+            # allys_seq = allys.clone()
+            # seqs = torch.cat([seqs, allys_seq.unsqueeze(-1)], -1)
+
+            # allys = dataset.scale_back_Y(allys)
             # Creating seq2seqModel
             path_model = model_path_save + region + '_' + ew_str + '_' + '.pth'
-            # seqModel = EncoderDecoder(seqs.shape[-1], RNN_DIM, wk_ahead)  # Change
-            # seqModel = InputEncoderDecoder(T, seqs.shape[-1], RNN_DIM, wk_ahead)
-            # seqModel = EncoderDecoderHidden(seqs.shape[-1], RNN_DIM, wk_ahead)
-            # seqModel = InputEncoderDecoderHidden(T, seqs.shape[-1], RNN_DIM, wk_ahead)
 
-            # seqModel = EncoderAttentionDecoder(RNN_DIM, seqs.shape[-1], RNN_DIM, wk_ahead)
+            seqModel = InputEncoderDecoderHidden(T, seqs.shape[-1], RNN_DIM, wk_ahead)
 
-            seqModel = InputEncoderAttentionDecoder(T, seqs.shape[-1], RNN_DIM, wk_ahead)
             seqModel.load_state_dict(torch.load(path_model))
             seqModel.eval()
             predictions = seqModel(seqs[-1].unsqueeze(0), mask_seq[-1],
@@ -126,25 +170,31 @@ def testing():
             rmse.append(utils.rmse_calc(real, predictions))
 
             # print(predictions)
-        mae = torch.stack(mae).mean()
-        mape = torch.stack(mape).mean()
-        rmse = torch.stack(rmse).mean()
+        mae = torch.stack(mae)
+        mae_p = mae.mean()
+        mape = torch.stack(mape)
+        mape_p = mape.mean()
+        rmse = torch.stack(rmse)
+        rmse_p = rmse.mean()
+
         # preds = torch.stack(preds, 1)
         rels = torch.stack(rels, 1).numpy()
 
         i = 0
         a = len(preds)
         for signal in preds:
-            if i == a - 1:
-                ax.plot(range(i-1, wk_ahead+i-1), signal)
-            else:
-                ax.plot(range(ys.shape[0] - wk_ahead), rels[0], c='b')
-                ax.plot(range(1, ys.shape[0] - wk_ahead + 1), rels[1], c='b')
-                ax.plot(range(2, ys.shape[0] - wk_ahead + 2), rels[2], c='b')
-                ax.plot(range(3, ys.shape[0] - wk_ahead + 3), rels[3], c='b')
+            ax.plot(range(i, wk_ahead+i), signal)
+            ax.plot(range(ys.shape[0] - n_min_seqs+1), rels[0], c='b')
+            ax.plot(range(1, ys.shape[0] - n_min_seqs+1 + 1), rels[1], c='b')
+            ax.plot(range(2, ys.shape[0] - n_min_seqs+1 + 2), rels[2], c='b')
+            ax.plot(range(3, ys.shape[0] - n_min_seqs+1 + 3), rels[3], c='b')
             i += 1
+        ax.set_ylim(0, 30000)
         plt.show()
-        print(f'MAE:{mae} MAPE:{mape} RMSE:{rmse}')
+        print(mae)
+        print(mape)
+        print(rmse)
+        print(f'MAE:{mae_p} MAPE:{mape_p} RMSE:{rmse_p}')
 
 
 if __name__ == '__main__':

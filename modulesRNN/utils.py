@@ -80,7 +80,7 @@ class Dataset:
         self.df['epiweek'] = self.df.loc[:, 'epiweek'].apply(convert_to_epiweek)
 
         # subset data using init parameters
-        self.df = self.df[(self.df["epiweeko"] < last_epi_week) & (self.df["region"] == region)]
+        self.df = self.df[(self.df["epiweek"] < last_epi_week) & (self.df["region"] == region)]
         self.df = self.df[include_col]
 
         # get data as array
@@ -112,7 +112,7 @@ class Dataset:
         num_seqs = (self.x.shape[0]-t+stride) // stride
         for n in range(num_seqs):  # x.shape: [total_size_data, number_signals]
             seqs.append(torch.tensor(self.x[n*stride:n*stride+t, :]))
-            last_data = t + stride*n - 1
+            last_data = t + stride*n - 2
             y_ = self.scaledY[last_data + 1:last_data + 1 + self.wk_ahead]
             targets.append(torch.tensor(y_))
             # Mask Sequences
@@ -259,11 +259,19 @@ class EarlyStopping(object):
 
 
 # noinspection PyPep8Naming
-def trainingModel(seq2seqmodel, dataset,
+def trainingModel(seq2seqmodel, dataset, num_seqs,
                   lr, epochs, min_delta, patience,
                   seqs, mask_seq, ys, mask_ys, allys, ysT,
                   allys_needed=False, get_att=False
                   ):
+    original_size = ys.shape[0]
+
+    seqs = seqs[-num_seqs:]
+    ys = ys[-num_seqs:]
+    mask_seq = mask_seq[-num_seqs:]
+    mask_ys = mask_ys[-num_seqs:]
+    allys = allys[-num_seqs:]
+
     loss = []
     val = []
     test = []
@@ -277,6 +285,8 @@ def trainingModel(seq2seqmodel, dataset,
     optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, params), lr=lr)
     start_time = time.time()
     stop = EarlyStopping(mode='min', min_delta=min_delta, patience=patience, percentage=False)
+    p_loss = torch.nn.MSELoss(reduction='none')
+
     for epoch in range(epochs+1):
         seq2seqmodel.train()
         for _ in range(n_batch // mini_batch_size):
@@ -294,8 +304,9 @@ def trainingModel(seq2seqmodel, dataset,
                 predictions = seq2seqmodel(seqs_batch, mask_seq_batch, ys_batch, get_att=get_att)
 
             # prediction loss
-            pred_loss = F.mse_loss(predictions, ys_batch, reduction='none') * mask_ys_batch
-            pred_loss = pred_loss.mean()
+            pred_loss = p_loss(predictions, ys_batch) * mask_ys_batch
+            # pred_loss = pred_loss * torch.tensor([80, 10, 5, 5]).to(device, data_type)
+            pred_loss = pred_loss.mean()/100
             optimizer.zero_grad()
             pred_loss.backward()
             optimizer.step()
@@ -321,20 +332,24 @@ def trainingModel(seq2seqmodel, dataset,
             # print(ysT[:ys.shape[0]])
             elapsed = time.time() - start_time
             # val_loss = mape_calc(dataset.scale_back_Y(predictions), ysT[:ys.shape[0]]) / (4*predictions.shape[0])
-            test_loss = (mape_calc(dataset.scale_back_Y(predictions), ysT[:ys.shape[0]], mask_ys))
+            test_loss = (mape_calc(dataset.scale_back_Y(predictions),
+                                   ysT[original_size-num_seqs:original_size],
+                                   mask_ys))
             test_loss = (test_loss * ys.shape[0]*4) / ((ys.shape[0]*4)-10)
             test.append(test_loss.to(torch.device("cpu")))
-            val_loss = (mape_calc(dataset.scale_back_Y(predictions), ysT[:ys.shape[0]], abs(mask_ys-1)))
+            val_loss = (mape_calc(dataset.scale_back_Y(predictions),
+                                  ysT[original_size-num_seqs:original_size],
+                                  abs(mask_ys-1)))
             val_loss = (val_loss * ys.shape[0]*4) / 4
             val_loss = val_loss.to(torch.device("cpu"))
             val.append(val_loss)
             have_to_stop = stop.step(test_loss)
             # print(stop.best)
             if have_to_stop:
-                print(f'Epoch: {epoch:d}, Learning Rate: {lr:.1e}')
+                print(f'Epoch: {epoch:d}, Learning Rate: {lr:.1e}, MAPE: {val_loss}')
                 print(dataset.scale_back_Y(predictions))
                 # print("Real Values:")
-                print(ysT[:ys.shape[0]])
+                print(ysT[original_size-num_seqs:original_size])
                 break
             # print("Testing Process Eval")
             # print('Epoch: %d, Validation: %.4f, Time: %.3f, Learning Rate: %.1e'

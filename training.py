@@ -6,7 +6,8 @@ from seq2seqModels.models import InputEncoderDecoder,\
                                  EncoderDecoderHidden,\
                                  InputEncoderDecoderHidden,\
                                  EncoderAttentionDecoder,\
-                                 InputEncoderAttentionDecoder
+                                 InputEncoderv2Decoder,\
+                                 InputEncoderAttentionDecoder, Input2EncoderDecoder
 
 import matplotlib.pyplot as plt
 import gc
@@ -21,10 +22,10 @@ data_type = torch.float32
 # Introduce the path were the data is storage
 data_path = './data/train_data_weekly_vEW202105.csv'
 model_path_or = './trainedModels/'
-version_models = ['SimpleForm/', 'Windowed/', 'WindowedHidden/', 'WindowedTemporal/']
+version_models = ['SimpleForm/', 'Windowed/', 'WindowedHidden/', 'WindowedTemporal/', 'Tests/']
 aproaches = ['ED', 'InputED']
 
-version_model = version_models[3]
+version_model = version_models[4]
 aproach = aproaches[0]
 model_path_save = model_path_or + version_model + aproach + '/'
 # Path de figs
@@ -43,17 +44,60 @@ weeks = [Week.fromstring(y) for y in weeks_strings]
 #            'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VA', 'VT', 'WA', 'WI', 'WV', 'WY']
 
 # regions = ['X', 'CA', 'FL', 'GA', 'IL', 'LA', 'PA', 'TX', 'WA']
-regions = ['X', 'TX', 'GA', 'LA', 'MO']
-# regions = ['X']
+# regions = ['X', 'TX', 'GA', 'LA', 'MO']
+regions = ['X']
 
 # Select signals
 include_col = ['target_death', 'retail_and_recreation_percent_change_from_baseline',
-               'grocery_and_pharmacy_percent_change_from_baseline', 'parks_percent_change_from_baseline',
-               'transit_stations_percent_change_from_baseline', 'workplaces_percent_change_from_baseline',
-               'residential_percent_change_from_baseline', 'positiveIncrease', 'negativeIncrease',
-               'totalTestResultsIncrease', 'onVentilatorCurrently', 'inIcuCurrently', 'recovered',
-               'hospitalizedIncrease', 'death_jhu_incidence', 'dex_a', 'apple_mobility', 'CLI Percent of Total Visits',
-               'fb_survey_cli']
+               'grocery_and_pharmacy_percent_change_from_baseline',
+               'parks_percent_change_from_baseline',
+               'transit_stations_percent_change_from_baseline',
+               'workplaces_percent_change_from_baseline',
+               'residential_percent_change_from_baseline',
+               'apple_mobility',
+               'dex', 'dex_a',
+               'dex_income_1',
+               'dex_income_1_a',
+               'dex_income_2',
+               'dex_income_2_a',
+               'dex_income_3',
+               'dex_income_3_a',
+               'dex_income_4',
+               'dex_income_4_a',
+               'dex_education_1',
+               'dex_education_1_a',
+               'dex_education_2',
+               'dex_education_2_a',
+               'dex_education_3',
+               'dex_education_3_a',
+               'dex_education_4',
+               'dex_education_4_a',
+               'dex_race_asian',
+               'dex_race_asian_a',
+               'dex_race_black',
+               'dex_race_black_a',
+               'dex_race_hispanic',
+               'dex_race_hispanic_a',
+               'dex_race_white',
+               'dex_race_white_a',
+               'people_total',
+               'people_total_2nd_dose',
+                'covidnet',
+               'positiveIncrease',
+               'negativeIncrease',
+               'totalTestResultsIncrease',
+               'onVentilatorCurrently',
+               'inIcuCurrently'	,
+               'recovered',
+               'hospitalizedIncrease',
+               'Observed Number',
+               'Excess Higher Estimate',
+               'death_jhu_incidence',
+               'fb_survey_cli',
+               'google_survey_cli',
+               'fb_survey_wili',
+               'Number of Facilities Reporting',
+               'CLI Percent of Total Visits']
 
 # Dim of rnn hidden states
 RNN_DIM = 128
@@ -62,17 +106,22 @@ RNN_DIM = 128
 n_signals = len(include_col) - 1
 
 
+allys_needed = True
 # Main function
 # noinspection PyPep8Naming
+
+num_seqs = 5
+
+
 def training_process():
     last_week_data = Week.fromstring('202106')  # Total weeks: 49
     T = 10
     stride = 1
     total_weeks = 49
-    n_min_seqs = 5  # Goes from 5 to 31(totalWeeks - T + stride / stride) - weakAhead
+    n_min_seqs = 10  # Goes from 5 to 31(totalWeeks - T + stride / stride) - weakAhead
     max_val_week = total_weeks - wk_ahead + 1
     min_val_week = T + n_min_seqs - 1
-
+    # min_val_week = 40
     print("Initializing ...")
     print(device)
     for region in regions:
@@ -94,41 +143,57 @@ def training_process():
             dataset = Dataset(data_path, ew, region, include_col, wk_ahead)
             # seqs, ys, mask_seq, mask_ys, allys = dataset.create_seqs(n_min_seqs, RNN_DIM)
             seqs, ys, mask_seq, mask_ys, allys, test = dataset.create_seqs_limited(T, stride, RNN_DIM, get_test=True)
-            allys = dataset.scale_back_Y(allys)
+
+            # allys_seq = allys.clone()
+            # seqs = torch.cat([seqs, allys_seq.unsqueeze(-1)], -1)
+
+            # allys = dataset.scale_back_Y(allys)
+
             # Creating seq2seqModel
             # seqModel = EncoderDecoder(seqs.shape[-1], RNN_DIM, wk_ahead)  # Change
-            # seqModel = InputEncoderDecoder(T, seqs.shape[-1], RNN_DIM, wk_ahead)
-            seqModel = EncoderAttentionDecoder(RNN_DIM, seqs.shape[-1], RNN_DIM, wk_ahead)
+            # seqModel = InputEncoderDecoder(seqs.shape[1], seqs.shape[-1], RNN_DIM, wk_ahead)
+            # seqModel = EncoderAttentionDecoder(RNN_DIM, seqs.shape[-1], RNN_DIM, wk_ahead)
             # seqModel = InputEncoderAttentionDecoder(T, seqs.shape[-1], RNN_DIM, wk_ahead)
-            # seqModel = InputEncoderDecoderHidden(T, seqs.shape[-1], RNN_DIM, wk_ahead)
+            seqModel = InputEncoderDecoderHidden(T, seqs.shape[-1], RNN_DIM, wk_ahead)
             # seqModel = EncoderDecoderHidden(seqs.shape[-1], RNN_DIM, wk_ahead)
 
+            # seqModel = InputEncoderv2Decoder(T, seqs.shape[-1], RNN_DIM, wk_ahead)
+            # seqModel = InputEncoderv2Decoder(seqs.shape[1], seqs.shape[-1], RNN_DIM, wk_ahead)
+
+            # seqModel = Input2EncoderDecoder(T, seqs.shape[-1], RNN_DIM, wk_ahead,)
             # Trainig process
-            val, loss, test = trainingModel(seqModel, dataset,
-                                            0.001, 500, 0.1, 6,
+            val, loss, test = trainingModel(seqModel, dataset, num_seqs,
+                                            0.001, 500, 0.1, 10,
                                             seqs, mask_seq, ys, mask_ys, allys, ysT,
-                                            allys_needed=True,
+                                            allys_needed=allys_needed,
                                             get_att=False)
             total_epoch1 = len(val)
             twin1.plot(range(total_epoch1), val, c='r')
             twin2.plot(range(total_epoch1), test, c='g')
             ax.plot(range(total_epoch1), loss, c='b')
             # fig.show()
-            val, loss, test = trainingModel(seqModel, dataset,
-                                            0.0001, 500, 0.2, 3,
+            val = []
+            loss = []
+            test = []
+
+            val, loss, test = trainingModel(seqModel, dataset, num_seqs,
+                                            0.0001, 500, 0.1, 10,
                                             seqs, mask_seq, ys, mask_ys, allys, ysT,
-                                            allys_needed=True,
+                                            allys_needed=allys_needed,
                                             get_att=False)
             # Ploting loss and eval
             total_epoch2 = len(val) - 1
             twin1.plot(range(total_epoch1-1, total_epoch1 + total_epoch2), val, c='r')
             twin2.plot(range(total_epoch1-1, total_epoch1 + total_epoch2), test, c='g')
             ax.plot(range(total_epoch1-1, total_epoch1 + total_epoch2), loss, c='b')
+            val = []
+            loss = []
+            test = []
 
-            val, loss, test = trainingModel(seqModel, dataset,
-                                            0.00001, 500, 0.1, 2,
+            val, loss, test = trainingModel(seqModel, dataset, num_seqs,
+                                            0.00001, 500, 0.1, 10,
                                             seqs, mask_seq, ys, mask_ys, allys, ysT,
-                                            allys_needed=True,
+                                            allys_needed=allys_needed,
                                             get_att=False)
             # Ploting loss and eval
             total_epoch3 = len(val) - 1
@@ -138,6 +203,10 @@ def training_process():
                              test, c='g', label='Test')
             p3, = ax.plot(range(total_epoch1 + total_epoch2-1, total_epoch1+total_epoch2+total_epoch3), loss,
                           c='b', label='Loss')
+            val = []
+            loss = []
+            test = []
+
             ax.set_ylabel("Loss")
             twin1.set_ylabel("Val")
             twin2.set_ylabel("Test")
@@ -167,6 +236,17 @@ def training_process():
             plt.cla()
             fig.clf()
             gc.collect()
+            del seqModel
+            seqModel = []
+            val = []
+            loss = []
+            test = []
+            seqs = seqs.cpu()
+            ys = ys.cpu()
+            mask_seq = mask_seq.cpu()
+            mask_ys = mask_ys.cpu()
+            allys = allys.cpu()
+
         # plt.show()
 
 
