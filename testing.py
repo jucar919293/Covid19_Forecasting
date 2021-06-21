@@ -26,11 +26,11 @@ data_type = torch.float32
 # Introduce the path were the data is storage
 data_path = './data/train_data_weekly_vEW202105.csv'
 model_path_or = './trainedModels/'
-version_models = ['SimpleForm/', 'Windowed/', 'WindowedHidden/', 'WindowedTemporal/', 'Tests/']
+version_models = ['SimpleForm/', 'Windowed/', 'WindowedHidden/', 'WindowedTemporal/', 'Tests/', 'Tests2/']
 aproaches = ['ED', 'InputED']
 
-version_model = version_models[4]
-aproach = aproaches[0]
+version_model = version_models[5]
+aproach = aproaches[1]
 model_path_save = model_path_or + version_model + aproach + '/'
 # Path de figs
 path_figs = model_path_or + version_model + 'Figs/'
@@ -105,7 +105,7 @@ include_col = ['target_death', 'retail_and_recreation_percent_change_from_baseli
 
 
 # Dim of rnn hidden states
-RNN_DIM = 128
+RNN_DIM = 32
 
 # Number of external signals
 n_signals = len(include_col) - 1
@@ -117,7 +117,7 @@ def testing():
     T = 10
     stride = 1
     total_weeks = 49
-    n_min_seqs = 10  # Goes from 5 to 31(totalWeeks - T + stride / stride) - weakAhead
+    n_min_seqs = 6     # Goes from 5 to 31(totalWeeks - T + stride / stride) - weakAhead
     max_val_week = total_weeks - wk_ahead + 1
     min_val_week = T + n_min_seqs - 1
 

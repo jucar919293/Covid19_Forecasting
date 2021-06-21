@@ -89,7 +89,14 @@ class Dataset:
 
         # scale Y
         self.meanY = self.y.mean()
+        self.max = self.y.max()
+        self.min = self.y.min()
+
         self.stdY = self.y.std()
+        # changed:
+        # self.scaledY = self.y - self.min
+        # self.scaledY = self.scaledY / (self.max-self.min)
+
         self.scaledY = self.y - self.meanY
         self.scaledY /= self.stdY
         self.testY = torch.tensor(self.y[len(self.y) - wk_ahead:len(self.y) + 1], dtype=data_type).unsqueeze(0)
@@ -98,8 +105,10 @@ class Dataset:
     def scale_back_Y(self, y):
         mean = torch.tensor([self.meanY], dtype=data_type).to(device)
         std = torch.tensor([self.stdY], dtype=data_type).to(device)
+        min = torch.tensor([self.min], dtype=data_type).to(device)
+        max = torch.tensor([self.max], dtype=data_type).to(device)
         torch.cuda.empty_cache()
-        return (y * std) + mean
+        return (y * (std)) + mean
 
     # noinspection DuplicatedCode
     def create_seqs_limited(self, t, stride, rnn_dim, get_test=False):
@@ -275,8 +284,7 @@ def trainingModel(seq2seqmodel, dataset, num_seqs,
     loss = []
     val = []
     test = []
-    training_epoch_print = 20
-    testing_epoch_print = 20
+    training_epoch_print = 5
     n_batch = seqs.shape[0]
     mini_batch_size = n_batch // 2
     print(f'Total Nº batch: {n_batch}')
@@ -305,8 +313,8 @@ def trainingModel(seq2seqmodel, dataset, num_seqs,
 
             # prediction loss
             pred_loss = p_loss(predictions, ys_batch) * mask_ys_batch
-            # pred_loss = pred_loss * torch.tensor([80, 10, 5, 5]).to(device, data_type)
-            pred_loss = pred_loss.mean()/100
+            # pred_loss = pred_loss * torch.tensor([50, 5, 5, 40]).to(device, data_type)
+            pred_loss = pred_loss.mean()
             optimizer.zero_grad()
             pred_loss.backward()
             optimizer.step()
@@ -319,7 +327,6 @@ def trainingModel(seq2seqmodel, dataset, num_seqs,
             loss.append(loss_send)
             # print(f'Epoch: {epoch:d}, Learning Rate: {lr:.1e}')
             # loss.append(pred_loss.item())
-        if epoch % testing_epoch_print == 0:
             seq2seqmodel.eval()
             if allys_needed:
                 predictions = seq2seqmodel(seqs, mask_seq, allys, ys, get_att=get_att)
@@ -330,7 +337,7 @@ def trainingModel(seq2seqmodel, dataset, num_seqs,
             # print(dataset.scale_back_Y(predictions))
             # print("Real Values:")
             # print(ysT[:ys.shape[0]])
-            elapsed = time.time() - start_time
+            # elapsed = time.time() - start_time
             # val_loss = mape_calc(dataset.scale_back_Y(predictions), ysT[:ys.shape[0]]) / (4*predictions.shape[0])
             test_loss = (mape_calc(dataset.scale_back_Y(predictions),
                                    ysT[original_size-num_seqs:original_size],
@@ -354,5 +361,5 @@ def trainingModel(seq2seqmodel, dataset, num_seqs,
             # print("Testing Process Eval")
             # print('Epoch: %d, Validation: %.4f, Time: %.3f, Learning Rate: %.1e'
             #      % (epoch, val_loss, elapsed, lr))
-            start_time = time.time()
+            # start_time = time.time()
     return val, loss, test

@@ -62,6 +62,76 @@ class InputAttention(nn.Module):
         return e_values_t, att_values_t
 
 
+class InputAttentionv2Dec(nn.Module):
+
+    def __init__(
+            self,
+            size_hidden: int = 128,
+            n_features: int = 18,  # Number of features
+            size_seq: int = 40,
+            T: int = 15,
+    ) -> None:
+        super(InputAttentionv2Dec, self).__init__()
+
+        self.size_hidden = size_hidden
+        self.n_features = n_features
+        self.size_seq = size_seq
+
+        self.linearHidden = nn.Linear(
+            in_features=self.size_hidden,
+            out_features=10,
+            bias=True
+        ).to(device, data_type)
+        self.linearSignals = nn.Linear(
+            in_features=self.size_seq,
+            out_features=10,
+            bias=True
+        ).to(device, data_type)
+        self.linearOut = nn.Linear(
+            in_features=10,
+            out_features=5,
+            bias=True
+        ).to(device, data_type)
+        self.linearOut2 = nn.Linear(
+            in_features=5,
+            out_features=1,
+            bias=True
+        ).to(device, data_type)
+        self.soft = nn.Softmax(1)
+
+        self.bn1 = nn.BatchNorm1d(num_features=T).to(device, data_type)
+        self.bn2 = nn.BatchNorm1d(num_features=T).to(device, data_type)
+        self.bn3 = nn.BatchNorm1d(num_features=T).to(device, data_type)
+
+        self.relu1 = torch.nn.LeakyReLU(negative_slope=0.1)
+        self.relu2 = torch.nn.LeakyReLU(negative_slope=0.1)
+        self.relu3 = torch.nn.LeakyReLU(negative_slope=0.1)
+
+        self.sig1 = torch.nn.Sigmoid()
+        self.sig2 = torch.nn.Sigmoid()
+        self.sig3 = torch.nn.Sigmoid()
+
+        self.dropout = torch.nn.Dropout(0.25)  # Probar
+
+        # init weights
+        weight_init(self.linearHidden)
+        weight_init(self.linearSignals)
+        weight_init(self.linearOut)
+        weight_init(self.linearOut2)
+
+    def forward(self, signalK, h_t_previous):
+        linear_hidens = self.bn1(self.sig1(self.linearHidden(h_t_previous)))
+        linear_signal = self.bn2(self.sig2(self.linearSignals(signalK)))
+        sum_linears = linear_hidens.add(linear_signal)
+        sum_linears = self.dropout(sum_linears)
+        sum_linears = self.linearOut(sum_linears)
+        tan_sum = self.bn3(self.sig3(sum_linears))
+        e_values_t = self.linearOut2(tan_sum)  # eValues = (V(tanh(H*W1 +b1+x*W2 +b2)+b3)
+        att_values_t = self.soft(e_values_t).squeeze(-1)
+        torch.cuda.empty_cache()
+        return e_values_t, att_values_t
+
+
 class InputAttentionv2(nn.Module):
 
     def __init__(
@@ -581,7 +651,7 @@ class DecoderHidden(nn.Module):
             n_layers: int = 1,
             bidirectional: bool = False,
             dim_out: int = 1,
-            dropout: float = 0.05,
+            dropout: float = 0.5,
     ) -> None:
         """
         param dim_seq_in: Dimensionality of input vector (hiden state size)
@@ -609,29 +679,34 @@ class DecoderHidden(nn.Module):
                 in_features=hidden_size,
                 out_features=int(hidden_size / 2)
             ),
-            nn.LeakyReLU(negative_slope=0.1),
+            nn.LeakyReLU(negative_slope=0.3),
+            # nn.Tanh(),
             nn.BatchNorm1d(num_features=1, affine=True),
 
             nn.Linear(
                 in_features=int(hidden_size / 2),
                 out_features=int(hidden_size / 4)
             ),
-            nn.LeakyReLU(negative_slope=0.1),
+            nn.LeakyReLU(negative_slope=0.3),
+            # nn.Tanh(),
             nn.BatchNorm1d(num_features=1, affine=True),
 
-            nn.Dropout(dropout),
+            nn.Dropout(self.dropout),
 
             nn.Linear(
                 in_features=int(hidden_size / 4),
                 out_features=int(hidden_size / 8)
             ),
-            nn.LeakyReLU(negative_slope=0.1),
+            nn.LeakyReLU(negative_slope=0.3),
+            # nn.Tanh(),
             nn.BatchNorm1d(num_features=1, affine=True),
 
             nn.Linear(
                 in_features=int(hidden_size / 8),
                 out_features=self.dim_out
             ),
+            nn.LeakyReLU(negative_slope=0.3),
+            # nn.Tanh(),
         ]
         self.out_layer = nn.Sequential(*self.out_layer)
         # init weights
@@ -667,6 +742,91 @@ class DecoderHidden(nn.Module):
             last_d = self.rnn(input)[0][:, 0, :].unsqueeze(1)  # index 0 obtains all hidden state
         torch.cuda.empty_cache()
         outputs = torch.stack(outputs, 1).squeeze()
+        return outputs
+
+
+# noinspection PyAbstractClass
+class DecoderHidden4out(nn.Module):
+    def __init__(
+            self,
+            dim_seq_in: int = 129,
+            rnn_out: int = 128,
+            n_layers: int = 1,
+            bidirectional: bool = False,
+            dim_out: int = 4,
+            dropout: float = 0.5,
+    ) -> None:
+        """
+        param dim_seq_in: Dimensionality of input vector (hiden state size)
+        param rnn_out: output dimension for rnn
+        """
+        super(DecoderHidden4out, self).__init__()
+
+        self.dim_seq_in = dim_seq_in
+        self.rnn_out = rnn_out
+        self.dim_out = dim_out
+        self.bidirectional = bidirectional
+        self.dropout = dropout
+
+        hidden_size = self.rnn_out // 2 if self.bidirectional else self.rnn_out
+
+        self.rnn = nn.GRU(
+            input_size=self.dim_seq_in,
+            hidden_size=hidden_size,
+            num_layers=n_layers,
+            batch_first=True,
+        )
+
+        self.out_layer = [
+            nn.Linear(
+                in_features=hidden_size,
+                out_features=int(hidden_size / 2)
+            ),
+            nn.LeakyReLU(negative_slope=0.3),
+            # nn.Tanh(),
+            nn.BatchNorm1d(num_features=1, affine=True),
+
+            nn.Linear(
+                in_features=int(hidden_size / 2),
+                out_features=int(hidden_size / 4)
+            ),
+            nn.LeakyReLU(negative_slope=0.3),
+            # nn.Tanh(),
+            nn.BatchNorm1d(num_features=1, affine=True),
+
+            nn.Dropout(self.dropout),
+
+            nn.Linear(
+                in_features=int(hidden_size / 4),
+                out_features=int(hidden_size / 8)
+            ),
+            nn.LeakyReLU(negative_slope=0.3),
+            # nn.Tanh(),
+            nn.BatchNorm1d(num_features=1, affine=True),
+
+            nn.Linear(
+                in_features=int(hidden_size / 8),
+                out_features=self.dim_out
+            ),
+            nn.LeakyReLU(negative_slope=0.3),
+            # nn.Tanh(),
+        ]
+        self.out_layer = nn.Sequential(*self.out_layer)
+        # init weights
+        weight_init(self.rnn)
+        weight_init(self.out_layer)
+
+    def forward(self, hiddens, k_wk_ahead, allys, ys=None, teacher_forcing_ratio=0.5):
+        """
+        Teacher forcing
+
+        param k_wk_ahead: how many weeks ahead to forecast
+        """
+        inputs = torch.cat((hiddens, allys.unsqueeze(-1)), dim=2)
+        # pdb.set_trace()
+        last_d = self.rnn(inputs)[0][:, 0, :].unsqueeze(1)
+        # note that hidden should be of (num_layers * num_directions, batch, hidden_size)
+        outputs = self.out_layer(last_d)
         return outputs
 
 
@@ -810,6 +970,7 @@ class DecoderAttentionv2(nn.Module):
             bidirectional: bool = False,
             dim_out: int = 1,
             dropout: float = 0.05,
+            T: int = 15,
     ) -> None:
         """
         param dim_seq_in: Dimensionality of input vector (hiden state size)
@@ -833,39 +994,44 @@ class DecoderAttentionv2(nn.Module):
             batch_first=True,
         )
 
-        self.attention = InputAttentionv2(size_hidden=self.rnn_out,
-                                          n_features=self.dim_seq_in,
-                                          size_seq=self.size_seq)
+        self.attention = InputAttentionv2Dec(size_hidden=self.rnn_out,
+                                             n_features=self.dim_seq_in,
+                                             size_seq=self.size_seq,
+                                             T=T)
 
         self.out_layer = [
             nn.Linear(
                 in_features=hidden_size,
                 out_features=int(hidden_size / 2)
             ),
-            nn.LeakyReLU(negative_slope=0.1),
-            nn.BatchNorm1d(num_features=1, affine=True),
+            nn.LeakyReLU(negative_slope=0.3),
+            # nn.Tanh(),
+            nn.BatchNorm1d(num_features=int(hidden_size / 2), affine=True),
 
             nn.Linear(
                 in_features=int(hidden_size / 2),
                 out_features=int(hidden_size / 4)
             ),
-            nn.LeakyReLU(negative_slope=0.1),
-            nn.BatchNorm1d(num_features=1, affine=True),
+            nn.LeakyReLU(negative_slope=0.3),
+            # nn.Tanh(),
+            nn.BatchNorm1d(num_features=int(hidden_size / 4), affine=True),
 
-            nn.Dropout(dropout),
+            nn.Dropout(self.dropout),
 
             nn.Linear(
                 in_features=int(hidden_size / 4),
                 out_features=int(hidden_size / 8)
             ),
-            nn.LeakyReLU(negative_slope=0.1),
-            nn.BatchNorm1d(num_features=1, affine=True),
+            nn.LeakyReLU(negative_slope=0.3),
+            # nn.Tanh(),
+            nn.BatchNorm1d(num_features=int(hidden_size / 8), affine=True),
 
             nn.Linear(
                 in_features=int(hidden_size / 8),
                 out_features=self.dim_out
             ),
-
+            nn.LeakyReLU(negative_slope=0.3),
+            # nn.Tanh(),
         ]
         self.out_layer = nn.Sequential(*self.out_layer)
         # init weights
